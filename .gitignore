@@ -1,0 +1,29 @@
+# Python
+venv/
+.vnev/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Environment variables / secrets
+.env
+.env.*
+*.pem
+
+# AWS CDK
+infrastructure/cdk.out/
+infrastructure/.cdk.staging/
+infrastructure/node_modules/
+infrastructure/cdk.context.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
