@@ -12,45 +12,45 @@ RAG pattern itself.
 **Status:** work in progress. Day 1 is done - the ingestion side (upload,
 chunk, embed, store). Query API and the rest are still coming.
 
-## How it works
+## Architecture
 
-- Upload a doc to the S3 bucket
-- That fires the ingest Lambda: it splits the doc into overlapping chunks,
-  embeds each chunk with Gemini, and writes them to a DynamoDB table
-- (planned) `POST /query` hits the query Lambda: it embeds the question,
-  scans the chunks, ranks them by cosine similarity, and asks the LLM for an
-  answer using the top matches as context
-- (planned) if the primary LLM call fails it falls back from Gemini to Groq
+```mermaid
+flowchart LR
+    U[Client] -->|upload doc| S3[(S3 bucket)]
+    S3 -->|ObjectCreated| ING[Lambda: ingest]
+    ING -->|embed chunks| GEM1[Gemini embeddings]
+    ING -->|write chunks| DDB[(DynamoDB ChunksTable)]
 
-There's no vector database. The table just stores the vectors as JSON and the
-Lambda does the similarity math in memory. That's fine at this size - I'd
-switch to OpenSearch or pgvector if the corpus got large.
+    U -->|POST /query| APIGW[API Gateway]
+    APIGW --> QRY[Lambda: query]
+    QRY -->|embed question| GEM2[Gemini embeddings]
+    QRY -->|scan + cosine rank| DDB
+    QRY -->|answer with context| LLM[Gemini, falls back to Groq]
+    QRY -->|answer + citations| U
+
+    ING -.failed events.-> DLQ[(SQS dead-letter queue)]
+    ING & QRY -.logs / metrics.-> CW[CloudWatch]
+```
+
+The query path, the fallback, and the DLQ are still planned - Day 1 covers
+S3 -> ingest Lambda -> DynamoDB.
+
+There's no vector database. The table stores the vectors as JSON and the Lambda
+does the cosine similarity in memory. Fine at this size; I'd move to OpenSearch
+or pgvector if the corpus got large.
 
 ## Why these choices
 
 - **DynamoDB instead of a vector DB** - on-demand DynamoDB costs nothing when
-  idle. OpenSearch Serverless bills by the hour no matter what, which kills the
-  free-tier goal.
+  idle. OpenSearch Serverless bills by the hour no matter what.
 - **Gemini / Groq instead of Bedrock** - Bedrock charges per token from the
-  first call. Gemini and Groq both have actual free tiers.
+  first call. Gemini and Groq both have real free tiers.
 - **Lambda instead of EC2** - the work is bursty, a few seconds when a doc
   lands and then nothing. An instance would just sit there costing money.
 - **API key in SSM Parameter Store** - free, and the key never ends up in the
-  repo or the CloudFormation template. Secrets Manager would cost $0.40/month
-  per secret.
+  repo or the CloudFormation template. Secrets Manager would cost per secret.
 
 The whole thing is meant to stay inside the AWS free tier.
-
-## Layout
-
-```
-infrastructure/   CDK app (Python)
-lambdas/ingest/   S3-triggered: chunk, embed, store   (done)
-lambdas/query/    API-triggered: retrieve + answer    (planned)
-scripts/          helper to upload a doc to the bucket
-corpus/           sample docs
-tests/            offline unit tests
-```
 
 ## Running it
 
@@ -69,13 +69,6 @@ aws ssm put-parameter --name /aws-doc-qa/gemini-api-key --type SecureString \
 cdk deploy InfrastructureStack --require-approval never
 
 cd .. && python scripts/upload_document.py corpus/lambda-limits.md
-```
-
-Tests:
-
-```bash
-pip install -r tests/requirements.txt
-python -m pytest tests/ -q
 ```
 
 ## Plan
