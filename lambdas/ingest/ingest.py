@@ -5,26 +5,23 @@ uploaded document it:
 
   1. reads the object from S3
   2. splits the text into overlapping chunks on paragraph boundaries
-  3. embeds each chunk with the Gemini text-embedding-004 model (raw REST,
-     no SDK, to keep the deployment a plain zip)
+  3. embeds each chunk with the Gemini text-embedding-004 model
   4. writes one item per chunk to the ChunksTable
 
-The Gemini API key is read once per cold start from SSM Parameter Store
-(SecureString) - never an env var, never committed.
+Gemini access and the SSM-backed API key live in the shared `doc_qa_common`
+layer.
 """
 
 import json
 import os
 import re
-import urllib.error
 import urllib.parse
-import urllib.request
 
 import boto3
 
+from doc_qa_common import gemini
+
 TABLE_NAME = os.environ["CHUNKS_TABLE_NAME"]
-GEMINI_API_KEY_PARAM = os.environ["GEMINI_API_KEY_PARAM"]
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-004")
 
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "150"))
@@ -33,24 +30,7 @@ CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "150"))
 TEXT_EXTENSIONS = (".txt", ".md", ".markdown", ".rst")
 
 _s3 = boto3.client("s3")
-_ddb = boto3.resource("dynamodb")
-_ssm = boto3.client("ssm")
-_table = _ddb.Table(TABLE_NAME)
-
-# Cached across warm invocations.
-_gemini_api_key: str | None = None
-
-GEMINI_EMBED_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent"
-)
-
-
-def _get_api_key() -> str:
-    global _gemini_api_key
-    if _gemini_api_key is None:
-        resp = _ssm.get_parameter(Name=GEMINI_API_KEY_PARAM, WithDecryption=True)
-        _gemini_api_key = resp["Parameter"]["Value"]
-    return _gemini_api_key
+_table = boto3.resource("dynamodb").Table(TABLE_NAME)
 
 
 def _document_id_from_key(key: str) -> str:
@@ -103,29 +83,6 @@ def chunk_text(text: str) -> list[dict]:
     return chunks
 
 
-def embed(text: str) -> list[float]:
-    """Embed a single string with Gemini. Raises on any non-200 response."""
-    url = GEMINI_EMBED_URL.format(model=EMBED_MODEL)
-    payload = json.dumps(
-        {
-            "model": f"models/{EMBED_MODEL}",
-            "content": {"parts": [{"text": text}]},
-        }
-    ).encode()
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": _get_api_key(),
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        body = json.loads(resp.read())
-    return body["embedding"]["values"]
-
-
 def _process_object(bucket: str, key: str) -> int:
     ext = re.search(r"\.[^.]+$", key)
     if not ext or ext.group(0).lower() not in TEXT_EXTENSIONS:
@@ -141,7 +98,7 @@ def _process_object(bucket: str, key: str) -> int:
 
     with _table.batch_writer() as batch:
         for i, ch in enumerate(chunks):
-            vector = embed(ch["text"])
+            vector = gemini.embed(ch["text"])
             batch.put_item(
                 Item={
                     "document_id": document_id,

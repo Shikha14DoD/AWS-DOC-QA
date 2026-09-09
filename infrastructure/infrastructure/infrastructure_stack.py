@@ -3,17 +3,21 @@ from pathlib import Path
 from aws_cdk import (
     Stack,
     Duration,
+    CfnOutput,
     RemovalPolicy,
     aws_s3 as s3,
     aws_s3_notifications as s3n,
     aws_dynamodb as dynamodb,
     aws_lambda as lambda_,
     aws_ssm as ssm,
+    aws_apigatewayv2 as apigw,
+    aws_apigatewayv2_integrations as apigw_int,
 )
 from constructs import Construct
 
 # Repo root: infrastructure/infrastructure/infrastructure_stack.py -> ../../
 REPO_ROOT = Path(__file__).resolve().parents[2]
+LAMBDAS = REPO_ROOT / "lambdas"
 
 # SSM parameter that holds the Gemini API key (SecureString). Created out of
 # band with `aws ssm put-parameter` so the key never touches git or the
@@ -25,6 +29,8 @@ class InfrastructureStack(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        # --- Storage -------------------------------------------------------
 
         # S3 bucket to hold uploaded documents. Uploading here triggers the
         # ingest Lambda below.
@@ -60,30 +66,45 @@ class InfrastructureStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
+        # --- Shared code + secret ---------------------------------------------
+
+        # Gemini client + SSM key helper, shared by both Lambdas. A layer keeps
+        # the code in one place and versions independently of the functions.
+        common_layer = lambda_.LayerVersion(
+            self, "CommonLayer",
+            code=lambda_.Code.from_asset(str(LAMBDAS / "layers" / "common")),
+            compatible_runtimes=[lambda_.Runtime.PYTHON_3_12],
+            description="Shared Gemini client and SSM key helper (doc_qa_common)",
+        )
+
         # Reference (not create) the SecureString parameter holding the API key.
         gemini_key_param = ssm.StringParameter.from_secure_string_parameter_attributes(
             self, "GeminiApiKeyParam",
             parameter_name=GEMINI_API_KEY_PARAM,
         )
 
-        # Ingest Lambda. Plain-zip asset (no bundling): the handler uses only
-        # the standard library plus boto3, which the Lambda runtime provides.
+        common_env = {
+            "CHUNKS_TABLE_NAME": self.chunks_table.table_name,
+            "GEMINI_API_KEY_PARAM": GEMINI_API_KEY_PARAM,
+            "EMBED_MODEL": "text-embedding-004",
+        }
+
+        # --- Ingest path ----------------------------------------------------
+
+        # Plain-zip asset (no bundling): stdlib + boto3 + the shared layer.
         self.ingest_fn = lambda_.Function(
             self, "IngestFunction",
             runtime=lambda_.Runtime.PYTHON_3_12,
-            handler="handler.handler",
-            code=lambda_.Code.from_asset(str(REPO_ROOT / "lambdas" / "ingest")),
+            handler="ingest.handler",
+            code=lambda_.Code.from_asset(str(LAMBDAS / "ingest")),
+            layers=[common_layer],
             timeout=Duration.minutes(5),
             memory_size=512,
-            environment={
-                "CHUNKS_TABLE_NAME": self.chunks_table.table_name,
-                "GEMINI_API_KEY_PARAM": GEMINI_API_KEY_PARAM,
-                "EMBED_MODEL": "text-embedding-004",
-            },
+            environment=common_env,
         )
 
-        # Least-privilege grants: write-only to the table, read the one
-        # object it was handed, decrypt the one SSM parameter.
+        # Least-privilege: write-only to the table, read the handed object,
+        # decrypt the one SSM parameter.
         self.chunks_table.grant_write_data(self.ingest_fn)
         self.documents_bucket.grant_read(self.ingest_fn)
         gemini_key_param.grant_read(self.ingest_fn)
@@ -93,3 +114,38 @@ class InfrastructureStack(Stack):
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(self.ingest_fn),
         )
+
+        # --- Query path ---------------------------------------------------
+
+        self.query_fn = lambda_.Function(
+            self, "QueryFunction",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="query.handler",
+            code=lambda_.Code.from_asset(str(LAMBDAS / "query")),
+            layers=[common_layer],
+            timeout=Duration.seconds(30),
+            memory_size=512,
+            environment={**common_env, "CHAT_MODEL": "gemini-2.0-flash", "TOP_K": "5"},
+        )
+
+        # Read-only on the table (retrieval scans it); decrypt the SSM key.
+        self.chunks_table.grant_read_data(self.query_fn)
+        gemini_key_param.grant_read(self.query_fn)
+
+        # HTTP API (API Gateway v2): cheaper and lower latency than REST API,
+        # and enough for a single JSON POST route.
+        http_api = apigw.HttpApi(
+            self, "QueryApi",
+            description="AWS Document Q&A - query endpoint",
+        )
+        http_api.add_routes(
+            path="/query",
+            methods=[apigw.HttpMethod.POST],
+            integration=apigw_int.HttpLambdaIntegration("QueryIntegration", self.query_fn),
+        )
+
+        # --- Outputs ----------------------------------------------------
+
+        CfnOutput(self, "DocumentsBucketName", value=self.documents_bucket.bucket_name)
+        CfnOutput(self, "ChunksTableName", value=self.chunks_table.table_name)
+        CfnOutput(self, "QueryApiUrl", value=http_api.api_endpoint)
