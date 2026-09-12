@@ -14,6 +14,8 @@ import urllib.request
 
 import boto3
 
+from .retry import call_with_retry
+
 _BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 _ssm = boto3.client("ssm")
@@ -28,7 +30,7 @@ def get_api_key(param_name: str | None = None) -> str:
     return _api_key_cache[param_name]
 
 
-def _post(model: str, method: str, payload: dict, timeout: int) -> dict:
+def _do_post(model: str, method: str, payload: dict, timeout: int) -> dict:
     req = urllib.request.Request(
         f"{_BASE}/{model}:{method}",
         data=json.dumps(payload).encode(),
@@ -40,6 +42,11 @@ def _post(model: str, method: str, payload: dict, timeout: int) -> dict:
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
+
+
+def _post(model: str, method: str, payload: dict, timeout: int) -> dict:
+    # a couple retries with backoff - gemini free tier rate limits (429) a lot
+    return call_with_retry(_do_post, model, method, payload, timeout)
 
 
 def embed(text: str, model: str | None = None, timeout: int = 20) -> list[float]:
