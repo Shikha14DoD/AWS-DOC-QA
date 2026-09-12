@@ -13,6 +13,7 @@ from aws_cdk import (
     aws_ssm as ssm,
     aws_apigatewayv2 as apigw,
     aws_apigatewayv2_integrations as apigw_int,
+    aws_cloudwatch as cloudwatch,
 )
 from constructs import Construct
 
@@ -167,6 +168,36 @@ class InfrastructureStack(Stack):
             path="/query",
             methods=[apigw.HttpMethod.POST],
             integration=apigw_int.HttpLambdaIntegration("QueryIntegration", self.query_fn),
+        )
+
+        # --- Alarms ----------------------------------------------------
+
+        # No SNS action wired up (that means picking an email/subscriber,
+        # which is a call for whoever runs this, not something to bake into
+        # the stack) - these alarms are visible in the CloudWatch console and
+        # ready for an action to be attached later.
+        cloudwatch.Alarm(
+            self, "IngestErrorsAlarm",
+            metric=self.ingest_fn.metric_errors(period=Duration.minutes(5)),
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description="Ingest Lambda raised an error",
+        )
+        cloudwatch.Alarm(
+            self, "QueryErrorsAlarm",
+            metric=self.query_fn.metric_errors(period=Duration.minutes(5)),
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description="Query Lambda raised an error",
+        )
+        cloudwatch.Alarm(
+            self, "IngestDLQAlarm",
+            metric=ingest_dlq.metric_approximate_number_of_messages_visible(
+                period=Duration.minutes(5),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description="A document failed ingestion and landed in the DLQ",
         )
 
         # --- Outputs ----------------------------------------------------
