@@ -20,10 +20,11 @@ from constructs import Construct
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LAMBDAS = REPO_ROOT / "lambdas"
 
-# SSM parameter that holds the Gemini API key (SecureString). Created out of
-# band with `aws ssm put-parameter` so the key never touches git or the
-# CloudFormation template.
+# SSM parameters holding API keys (SecureString). Created out of band with
+# `aws ssm put-parameter` so keys never touch git or the CloudFormation
+# template.
 GEMINI_API_KEY_PARAM = "/aws-doc-qa/gemini-api-key"
+GROQ_API_KEY_PARAM = "/aws-doc-qa/groq-api-key"
 
 
 class InfrastructureStack(Stack):
@@ -78,10 +79,14 @@ class InfrastructureStack(Stack):
             description="Shared Gemini client and SSM key helper (doc_qa_common)",
         )
 
-        # Reference (not create) the SecureString parameter holding the API key.
+        # Reference (not create) the SecureString parameters holding the API keys.
         gemini_key_param = ssm.StringParameter.from_secure_string_parameter_attributes(
             self, "GeminiApiKeyParam",
             parameter_name=GEMINI_API_KEY_PARAM,
+        )
+        groq_key_param = ssm.StringParameter.from_secure_string_parameter_attributes(
+            self, "GroqApiKeyParam",
+            parameter_name=GROQ_API_KEY_PARAM,
         )
 
         common_env = {
@@ -137,12 +142,20 @@ class InfrastructureStack(Stack):
             layers=[common_layer],
             timeout=Duration.seconds(30),
             memory_size=512,
-            environment={**common_env, "CHAT_MODEL": "gemini-2.0-flash", "TOP_K": "5"},
+            environment={
+                **common_env,
+                "CHAT_MODEL": "gemini-2.0-flash",
+                "TOP_K": "5",
+                "GROQ_API_KEY_PARAM": GROQ_API_KEY_PARAM,
+                "GROQ_CHAT_MODEL": "llama-3.1-8b-instant",
+            },
         )
 
-        # Read-only on the table (retrieval scans it); decrypt the SSM key.
+        # Read-only on the table (retrieval scans it); decrypt both SSM keys
+        # (gemini primary, groq fallback).
         self.chunks_table.grant_read_data(self.query_fn)
         gemini_key_param.grant_read(self.query_fn)
+        groq_key_param.grant_read(self.query_fn)
 
         # HTTP API (API Gateway v2): cheaper and lower latency than REST API,
         # and enough for a single JSON POST route.
