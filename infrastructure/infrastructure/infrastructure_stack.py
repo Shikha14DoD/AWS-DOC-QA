@@ -9,6 +9,7 @@ from aws_cdk import (
     aws_s3_notifications as s3n,
     aws_dynamodb as dynamodb,
     aws_lambda as lambda_,
+    aws_sqs as sqs,
     aws_ssm as ssm,
     aws_apigatewayv2 as apigw,
     aws_apigatewayv2_integrations as apigw_int,
@@ -91,6 +92,15 @@ class InfrastructureStack(Stack):
 
         # --- Ingest path ----------------------------------------------------
 
+        # S3 invokes the ingest Lambda asynchronously. If it keeps failing
+        # (bad file, gemini down past the retry budget, etc) async invokes
+        # get retried twice by Lambda itself and then, with a DLQ configured,
+        # land here instead of just vanishing.
+        ingest_dlq = sqs.Queue(
+            self, "IngestDLQ",
+            retention_period=Duration.days(14),
+        )
+
         # Plain-zip asset (no bundling): stdlib + boto3 + the shared layer.
         self.ingest_fn = lambda_.Function(
             self, "IngestFunction",
@@ -101,6 +111,8 @@ class InfrastructureStack(Stack):
             timeout=Duration.minutes(5),
             memory_size=512,
             environment=common_env,
+            dead_letter_queue=ingest_dlq,
+            retry_attempts=2,
         )
 
         # Least-privilege: write-only to the table, read the handed object,
