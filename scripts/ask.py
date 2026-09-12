@@ -41,6 +41,8 @@ def main() -> None:
         body = json.loads(resp.read())
 
     print(body.get("answer", body))
+    if body.get("provider"):
+        print(f"\n(answered by {body['provider']})")
     print()
     for c in body.get("citations", []):
         print(f"  [{c['marker']}] {c['source_key']} "
