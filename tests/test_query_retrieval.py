@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "lambdas" / "layers" / "common" / "python"))
 sys.path.insert(0, str(ROOT / "lambdas" / "query"))
 
 import query as handler  # noqa: E402
-from doc_qa_common import gemini  # noqa: E402
+from doc_qa_common import gemini, groq  # noqa: E402
 
 
 def _chunk(doc, cid, vec, text="passage"):
@@ -70,6 +70,20 @@ def test_answer_builds_numbered_citations(monkeypatch):
 def test_handler_rejects_missing_question(monkeypatch):
     resp = handler.handler({"body": json.dumps({"top_k": 3})}, None)
     assert resp["statusCode"] == 400
+
+
+def test_falls_back_to_groq_when_gemini_fails(monkeypatch):
+    _setup(monkeypatch, [1.0, 0.0, 0.0])
+
+    def _boom(*a, **kw):
+        raise RuntimeError("gemini is down")
+
+    monkeypatch.setattr(gemini, "generate", _boom)
+    monkeypatch.setattr(groq, "generate", lambda prompt, **kw: "groq says hi [1]")
+
+    out = handler.answer("timeout?", top_k=1)
+    assert out["answer"] == "groq says hi [1]"
+    assert out["provider"] == "groq"
 
 
 def test_handler_happy_path(monkeypatch):

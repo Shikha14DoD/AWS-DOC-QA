@@ -16,7 +16,7 @@ import time
 
 import boto3
 
-from doc_qa_common import gemini
+from doc_qa_common import gemini, groq
 
 TABLE_NAME = os.environ["CHUNKS_TABLE_NAME"]
 DEFAULT_TOP_K = int(os.environ.get("TOP_K", "5"))
@@ -84,12 +84,21 @@ def _build_prompt(question: str, hits: list[dict]) -> str:
     return f"Context passages:\n\n{context}\n\nQuestion: {question}"
 
 
+def _generate(prompt: str) -> tuple[str, str]:
+    """try gemini first, fall back to groq if it's down. returns (text, provider)."""
+    try:
+        return gemini.generate(prompt, system=SYSTEM_PROMPT), "gemini"
+    except Exception as exc:  # noqa: BLE001 - gemini is down/rate-limited, try groq
+        print(f"gemini generate failed, falling back to groq: {type(exc).__name__}: {exc}")
+        return groq.generate(prompt, system=SYSTEM_PROMPT), "groq"
+
+
 def answer(question: str, top_k: int) -> dict:
     hits = retrieve(question, top_k)
     if not hits:
-        return {"answer": "No documents have been ingested yet.", "citations": []}
+        return {"answer": "No documents have been ingested yet.", "citations": [], "provider": None}
 
-    text = gemini.generate(_build_prompt(question, hits), system=SYSTEM_PROMPT)
+    text, provider = _generate(_build_prompt(question, hits))
     citations = [
         {
             "marker": i,
@@ -103,7 +112,7 @@ def answer(question: str, top_k: int) -> dict:
         }
         for i, h in enumerate(hits, 1)
     ]
-    return {"answer": text, "citations": citations}
+    return {"answer": text, "citations": citations, "provider": provider}
 
 
 def _response(status: int, body: dict) -> dict:
