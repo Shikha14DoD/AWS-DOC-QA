@@ -137,10 +137,28 @@ def handler(event, context):
     top_k = int(payload.get("top_k") or DEFAULT_TOP_K)
     top_k = max(1, min(top_k, 20))
 
+    started = time.time()
     try:
         result = answer(question, top_k)
     except Exception as exc:  # noqa: BLE001 - surface a clean error, log the detail
-        print(f"query failed: {type(exc).__name__}: {exc}")
+        log_request(question, top_k, started, ok=False, provider=None, error=str(exc))
         return _response(502, {"error": "upstream failure answering the question"})
 
+    log_request(question, top_k, started, ok=True, provider=result.get("provider"))
     return _response(200, result)
+
+
+def log_request(question, top_k, started, ok, provider, error=None):
+    # one json line per request - latency, provider, success. this is what
+    # the cloudwatch metric filters (day 3) key off of.
+    entry = {
+        "event": "query",
+        "ok": ok,
+        "provider": provider,
+        "top_k": top_k,
+        "question_len": len(question),
+        "latency_ms": round((time.time() - started) * 1000),
+    }
+    if error:
+        entry["error"] = error
+    print(json.dumps(entry))

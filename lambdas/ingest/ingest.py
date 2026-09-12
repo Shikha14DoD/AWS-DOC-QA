@@ -15,6 +15,7 @@ layer.
 import json
 import os
 import re
+import time
 import urllib.parse
 
 import boto3
@@ -84,33 +85,54 @@ def chunk_text(text: str) -> list[dict]:
 
 
 def _process_object(bucket: str, key: str) -> int:
+    started = time.time()
     ext = re.search(r"\.[^.]+$", key)
     if not ext or ext.group(0).lower() not in TEXT_EXTENSIONS:
-        print(f"skip: unsupported file type key={key}")
+        log_ingest(key, 0, started, ok=True, skipped=True)
         return 0
 
-    obj = _s3.get_object(Bucket=bucket, Key=key)
-    text = obj["Body"].read().decode("utf-8", errors="replace")
-
     document_id = _document_id_from_key(key)
-    chunks = chunk_text(text)
-    print(f"ingest: key={key} document_id={document_id} chunks={len(chunks)}")
+    try:
+        obj = _s3.get_object(Bucket=bucket, Key=key)
+        text = obj["Body"].read().decode("utf-8", errors="replace")
+        chunks = chunk_text(text)
 
-    with _table.batch_writer() as batch:
-        for i, ch in enumerate(chunks):
-            vector = gemini.embed(ch["text"])
-            batch.put_item(
-                Item={
-                    "document_id": document_id,
-                    "chunk_id": f"{i:04d}",
-                    "text": ch["text"],
-                    "embedding": json.dumps(vector),
-                    "source_key": key,
-                    "char_start": ch["start"],
-                    "char_end": ch["end"],
-                }
-            )
+        with _table.batch_writer() as batch:
+            for i, ch in enumerate(chunks):
+                vector = gemini.embed(ch["text"])
+                batch.put_item(
+                    Item={
+                        "document_id": document_id,
+                        "chunk_id": f"{i:04d}",
+                        "text": ch["text"],
+                        "embedding": json.dumps(vector),
+                        "source_key": key,
+                        "char_start": ch["start"],
+                        "char_end": ch["end"],
+                    }
+                )
+    except Exception as exc:
+        # let it raise after logging - lambda will retry the async invoke,
+        # and it eventually lands in the dlq if it keeps failing
+        log_ingest(key, 0, started, ok=False, error=str(exc))
+        raise
+
+    log_ingest(key, len(chunks), started, ok=True)
     return len(chunks)
+
+
+def log_ingest(key, chunk_count, started, ok, skipped=False, error=None):
+    entry = {
+        "event": "ingest",
+        "key": key,
+        "ok": ok,
+        "skipped": skipped,
+        "chunks_written": chunk_count,
+        "latency_ms": round((time.time() - started) * 1000),
+    }
+    if error:
+        entry["error"] = error
+    print(json.dumps(entry))
 
 
 def handler(event, context):
