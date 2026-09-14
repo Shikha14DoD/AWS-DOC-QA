@@ -77,7 +77,7 @@ def generate(
     timeout: int = 30,
 ) -> str:
     """Return generated text for a prompt."""
-    model = model or os.environ.get("CHAT_MODEL", "gemini-2.0-flash")
+    model = model or os.environ.get("CHAT_MODEL", "gemini-3.6-flash")
     payload: dict = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": temperature},

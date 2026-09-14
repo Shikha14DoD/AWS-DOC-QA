@@ -146,7 +146,7 @@ class InfrastructureStack(Stack):
             memory_size=512,
             environment={
                 **common_env,
-                "CHAT_MODEL": "gemini-2.0-flash",
+                "CHAT_MODEL": "gemini-3.6-flash",
                 "TOP_K": "5",
                 "GROQ_API_KEY_PARAM": GROQ_API_KEY_PARAM,
                 "GROQ_CHAT_MODEL": "llama-3.1-8b-instant",
