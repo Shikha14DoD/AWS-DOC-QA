@@ -10,6 +10,7 @@ and cached for the life of the execution environment.
 
 import json
 import os
+import urllib.error
 import urllib.request
 
 import boto3
@@ -40,8 +41,15 @@ def _do_post(model: str, method: str, payload: dict, timeout: int) -> dict:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        # log the body google sent back (no key in it) - "404 Not Found" alone
+        # isn't enough to tell a bad model name from a disabled API
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        print(f"gemini http error {exc.code} calling {model}:{method}: {detail}")
+        raise
 
 
 def _post(model: str, method: str, payload: dict, timeout: int) -> dict:
