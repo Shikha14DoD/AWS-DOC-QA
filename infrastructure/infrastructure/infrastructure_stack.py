@@ -23,9 +23,10 @@ LAMBDAS = REPO_ROOT / "lambdas"
 
 # SSM parameters holding API keys (SecureString). Created out of band with
 # `aws ssm put-parameter` so keys never touch git or the CloudFormation
-# template.
-GEMINI_API_KEY_PARAM = "/aws-doc-qa/gemini-api-key"
-GROQ_API_KEY_PARAM = "/aws-doc-qa/groq-api-key"
+# template. Path can't start with "aws" or "ssm" - those prefixes are
+# reserved by SSM and PutParameter rejects them (learned the hard way).
+GEMINI_API_KEY_PARAM = "/docqa/gemini-api-key"
+GROQ_API_KEY_PARAM = "/docqa/groq-api-key"
 
 
 class InfrastructureStack(Stack):

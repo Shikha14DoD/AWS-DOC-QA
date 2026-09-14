@@ -63,7 +63,7 @@ python -m venv .venv && source .venv/Scripts/activate
 pip install -r requirements.txt
 
 # store the API key once
-aws ssm put-parameter --name /aws-doc-qa/gemini-api-key --type SecureString \
+aws ssm put-parameter --name /docqa/gemini-api-key --type SecureString \
   --value "YOUR_KEY" --region us-east-2
 
 cdk deploy InfrastructureStack --require-approval never
