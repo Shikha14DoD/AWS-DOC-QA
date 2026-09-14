@@ -149,7 +149,7 @@ class InfrastructureStack(Stack):
                 "CHAT_MODEL": "gemini-3.6-flash",
                 "TOP_K": "5",
                 "GROQ_API_KEY_PARAM": GROQ_API_KEY_PARAM,
-                "GROQ_CHAT_MODEL": "llama-3.1-8b-instant",
+                "GROQ_CHAT_MODEL": "openai/gpt-oss-20b",
             },
         )
 

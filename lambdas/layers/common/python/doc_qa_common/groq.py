@@ -53,7 +53,7 @@ def generate(
     temperature: float = 0.2,
     timeout: int = 30,
 ) -> str:
-    model = model or os.environ.get("GROQ_CHAT_MODEL", "llama-3.1-8b-instant")
+    model = model or os.environ.get("GROQ_CHAT_MODEL", "openai/gpt-oss-20b")
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
