@@ -30,6 +30,10 @@ def _do_post(payload: dict, timeout: int) -> dict:
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {get_api_key()}",
+            # groq's cloudflare front door bot-checks the default
+            # Python-urllib/x.y user-agent and blocks it (cf error 1010).
+            # a normal-looking UA gets through.
+            "User-Agent": "aws-doc-qa/1.0 (+https://github.com/Shikha14DoD/AWS-DOC-QA)",
         },
         method="POST",
     )
