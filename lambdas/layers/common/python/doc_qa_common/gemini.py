@@ -59,7 +59,7 @@ def _post(model: str, method: str, payload: dict, timeout: int) -> dict:
 
 def embed(text: str, model: str | None = None, timeout: int = 20) -> list[float]:
     """Return the embedding vector for a single string."""
-    model = model or os.environ.get("EMBED_MODEL", "text-embedding-004")
+    model = model or os.environ.get("EMBED_MODEL", "gemini-embedding-001")
     body = _post(
         model,
         "embedContent",

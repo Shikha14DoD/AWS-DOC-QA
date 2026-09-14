@@ -5,7 +5,7 @@ uploaded document it:
 
   1. reads the object from S3
   2. splits the text into overlapping chunks on paragraph boundaries
-  3. embeds each chunk with the Gemini text-embedding-004 model
+  3. embeds each chunk with the Gemini gemini-embedding-001 model
   4. writes one item per chunk to the ChunksTable
 
 Gemini access and the SSM-backed API key live in the shared `doc_qa_common`

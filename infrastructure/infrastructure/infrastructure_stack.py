@@ -94,7 +94,7 @@ class InfrastructureStack(Stack):
         common_env = {
             "CHUNKS_TABLE_NAME": self.chunks_table.table_name,
             "GEMINI_API_KEY_PARAM": GEMINI_API_KEY_PARAM,
-            "EMBED_MODEL": "text-embedding-004",
+            "EMBED_MODEL": "gemini-embedding-001",
         }
 
         # --- Ingest path ----------------------------------------------------
