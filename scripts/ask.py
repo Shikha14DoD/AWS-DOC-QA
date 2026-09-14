@@ -7,11 +7,16 @@ Reads the API URL from the deployed CloudFormation stack outputs, POSTs the
 question to /query, and prints the answer and its citations.
 """
 
+import io
 import json
 import sys
 import urllib.request
 
 import boto3
+
+# windows terminals default to cp1252, which can't encode stuff models like
+# to use (em dashes, smart quotes, narrow no-break spaces). force utf-8.
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 STACK_NAME = "InfrastructureStack"
 REGION = "us-east-2"
