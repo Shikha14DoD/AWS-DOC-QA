@@ -1,0 +1,62 @@
+[
+  {
+    "question": "What is the maximum execution timeout for a Lambda function?",
+    "type": "in_corpus",
+    "expected_source": "lambda-limits",
+    "expected_keywords": ["900", "15 minutes"]
+  },
+  {
+    "question": "How much memory can a single Lambda function be configured with?",
+    "type": "in_corpus",
+    "expected_source": "lambda-limits",
+    "expected_keywords": ["10,240", "10240", "10 GB"]
+  },
+  {
+    "question": "What is the default concurrent execution limit per AWS account for Lambda?",
+    "type": "in_corpus",
+    "expected_source": "lambda-limits",
+    "expected_keywords": ["1,000", "1000"]
+  },
+  {
+    "question": "What is the maximum size of a single DynamoDB item?",
+    "type": "in_corpus",
+    "expected_source": "dynamodb-basics",
+    "expected_keywords": ["400 KB", "400KB"]
+  },
+  {
+    "question": "Which DynamoDB billing mode has no cost when the table sits idle?",
+    "type": "in_corpus",
+    "expected_source": "dynamodb-basics",
+    "expected_keywords": ["on-demand", "pay-per-request"]
+  },
+  {
+    "question": "Can a DynamoDB Local Secondary Index be added to a table after it's created?",
+    "type": "in_corpus",
+    "expected_source": "dynamodb-basics",
+    "expected_keywords": ["table creation", "creation time"]
+  },
+  {
+    "question": "How many nines of durability does S3 Standard offer?",
+    "type": "in_corpus",
+    "expected_source": "s3-storage-classes",
+    "expected_keywords": ["11 nines", "99.999999999"]
+  },
+  {
+    "question": "What happens when you delete an object in a versioning-enabled S3 bucket?",
+    "type": "in_corpus",
+    "expected_source": "s3-storage-classes",
+    "expected_keywords": ["delete marker"]
+  },
+  {
+    "question": "What is the current price of a Tesla Model 3?",
+    "type": "out_of_scope"
+  },
+  {
+    "question": "Who won the 2024 US presidential election?",
+    "type": "out_of_scope"
+  },
+  {
+    "question": "What is the weather in Paris right now?",
+    "type": "out_of_scope"
+  }
+]
