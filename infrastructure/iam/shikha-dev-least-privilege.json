@@ -1,0 +1,79 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeCdkBootstrapRoles",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-deploy-role-761558630882-us-east-2",
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-file-publishing-role-761558630882-us-east-2",
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-image-publishing-role-761558630882-us-east-2",
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-lookup-role-761558630882-us-east-2",
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-cfn-exec-role-761558630882-us-east-2"
+      ]
+    },
+    {
+      "Sid": "CdkBootstrapReadState",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "cloudformation:DescribeStacks",
+        "cloudformation:ListStackResources"
+      ],
+      "Resource": [
+        "arn:aws:ssm:us-east-2:761558630882:parameter/cdk-bootstrap/*",
+        "arn:aws:cloudformation:us-east-2:761558630882:stack/CDKToolkit/*",
+        "arn:aws:cloudformation:us-east-2:761558630882:stack/InfrastructureStack/*"
+      ]
+    },
+    {
+      "Sid": "AppApiKeys",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:PutParameter"],
+      "Resource": "arn:aws:ssm:us-east-2:761558630882:parameter/docqa/*"
+    },
+    {
+      "Sid": "AppDocumentUpload",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::infrastructurestack-documentsbucket*",
+        "arn:aws:s3:::infrastructurestack-documentsbucket*/*"
+      ]
+    },
+    {
+      "Sid": "AppReadChunksTable",
+      "Effect": "Allow",
+      "Action": ["dynamodb:Scan", "dynamodb:GetItem", "dynamodb:Query"],
+      "Resource": "arn:aws:dynamodb:us-east-2:761558630882:table/InfrastructureStack-ChunksTable*"
+    },
+    {
+      "Sid": "AppInspectLambdas",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetFunction",
+        "lambda:ListFunctions",
+        "lambda:InvokeFunction"
+      ],
+      "Resource": "arn:aws:lambda:us-east-2:761558630882:function:InfrastructureStack-*"
+    },
+    {
+      "Sid": "AppTailLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:DescribeLogStreams",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "arn:aws:logs:us-east-2:761558630882:log-group:/aws/lambda/InfrastructureStack-*"
+    },
+    {
+      "Sid": "WhoAmI",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    }
+  ]
+}
