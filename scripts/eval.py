@@ -25,16 +25,18 @@ from pathlib import Path
 
 import boto3
 
-# LLMs like to put a narrow no-break space (U+202F) between a number and its
-# unit ("400 KB") instead of a plain ASCII space - typographically
-# correct, but an exact-string keyword check would call a genuinely right
-# answer wrong over it. Collapse every kind of whitespace to a single space
-# before comparing.
+# LLMs favor typographically "correct" Unicode punctuation over plain ASCII -
+# a narrow no-break space (U+202F) between a number and its unit ("400 KB"),
+# a non-breaking hyphen (U+2011) in compound words ("on‑demand"), en/em
+# dashes for a regular hyphen. An exact-string keyword check would call a
+# genuinely right answer wrong over it, so normalize both sides before
+# comparing.
 _WS = re.compile(r"\s+")
+_DASH = re.compile(r"[‐‑‒–—−]")
 
 
 def _normalize(text: str) -> str:
-    return _WS.sub(" ", text)
+    return _WS.sub(" ", _DASH.sub("-", text))
 
 STACK_NAME = "InfrastructureStack"
 REGION = "us-east-2"
