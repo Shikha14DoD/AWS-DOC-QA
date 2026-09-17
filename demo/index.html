@@ -280,6 +280,75 @@
     padding-top: 2px;
   }
   .footnote a { color: var(--accent-strong); }
+
+  .upload-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 4px 14px;
+  }
+  .upload-box summary {
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    padding: 8px 0;
+    color: var(--text-dim);
+    list-style: none;
+  }
+  .upload-box summary::-webkit-details-marker { display: none; }
+  .upload-box summary::before {
+    content: "+ ";
+    color: var(--accent-strong);
+  }
+  .upload-box[open] summary::before { content: "\2212 "; }
+  .upload-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 12px;
+  }
+  .upload-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  input[type="file"] {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--sans);
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  button.secondary {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 0.78rem;
+    background: transparent;
+    color: var(--accent-strong);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 6px 14px;
+    cursor: pointer;
+    flex: none;
+  }
+  button.secondary:disabled { opacity: 0.5; cursor: default; }
+  button.secondary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .upload-status {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    line-height: 1.5;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--text-dim);
+  }
+  .upload-status.good { color: var(--good); }
+  .upload-status.bad { color: var(--bad); }
+  .upload-hint {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
 </style>
 </head>
 <body>
@@ -300,6 +369,23 @@
 
   <div id="examples" class="examples"></div>
 
+  <details class="upload-box">
+    <summary>Upload a document</summary>
+    <div class="upload-body">
+      <div class="upload-hint">
+        .txt or .md only, under 20 KB, and it has to actually be about AWS -
+        this demo checks the content with an LLM and rejects anything else.
+        Accepted files get chunked, embedded, and become askable in a few
+        seconds.
+      </div>
+      <div class="upload-row">
+        <input type="file" id="fileInput" accept=".txt,.md,.markdown,.rst">
+        <button type="button" class="secondary" id="uploadBtn">Upload</button>
+      </div>
+      <div id="uploadStatus" class="upload-status" hidden></div>
+    </div>
+  </details>
+
   <form id="form">
     <textarea id="input" rows="1" placeholder="Ask about the corpus (Lambda, DynamoDB, S3 basics)&hellip;" required></textarea>
     <button type="submit" id="send">Ask</button>
@@ -311,7 +397,11 @@
 </div>
 
 <script>
-  const API_URL = "https://y1ivyu5swg.execute-api.us-east-2.amazonaws.com/query";
+  const API_BASE = "https://y1ivyu5swg.execute-api.us-east-2.amazonaws.com";
+  const API_URL = API_BASE + "/query";
+  const UPLOAD_URL = API_BASE + "/upload";
+  const MAX_UPLOAD_BYTES = 20000;
+  const ALLOWED_EXT = [".txt", ".md", ".markdown", ".rst"];
 
   const EXAMPLES = [
     "What is the maximum Lambda timeout?",
@@ -451,6 +541,70 @@
   renderExamples();
   // show the page doing something real on first load, not an empty shell
   ask(EXAMPLES[0]);
+
+  // --- upload ---------------------------------------------------------
+
+  const fileInput = document.getElementById("fileInput");
+  const uploadBtn = document.getElementById("uploadBtn");
+  const uploadStatus = document.getElementById("uploadStatus");
+
+  function setUploadStatus(kind, text) {
+    uploadStatus.hidden = false;
+    uploadStatus.className = "upload-status" + (kind ? " " + kind : "");
+    uploadStatus.textContent = text;
+  }
+
+  function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file);
+    });
+  }
+
+  uploadBtn.addEventListener("click", async () => {
+    const file = fileInput.files[0];
+    if (!file) {
+      setUploadStatus("bad", "pick a file first");
+      return;
+    }
+    const ext = "." + (file.name.split(".").pop() || "").toLowerCase();
+    if (!ALLOWED_EXT.includes(ext)) {
+      setUploadStatus("bad", `only ${ALLOWED_EXT.join(", ")} files are accepted`);
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setUploadStatus("bad", `file is too large - max ${MAX_UPLOAD_BYTES.toLocaleString()} bytes`);
+      return;
+    }
+
+    uploadBtn.disabled = true;
+    setUploadStatus(null, "uploading, then checking it's actually AWS-related…");
+    try {
+      const content = await readFileAsText(file);
+      const resp = await fetch(UPLOAD_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, content }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (resp.status === 429) {
+        setUploadStatus("bad", "too many uploads too quickly - wait a moment and try again");
+      } else if (resp.status === 422) {
+        setUploadStatus("bad", body.error || "rejected: doesn't look AWS-related");
+      } else if (!resp.ok) {
+        setUploadStatus("bad", body.error || `upload failed (HTTP ${resp.status})`);
+      } else {
+        setUploadStatus("good", body.message || "accepted");
+        fileInput.value = "";
+      }
+    } catch (err) {
+      setUploadStatus("bad", "couldn't reach the API - try again shortly");
+    } finally {
+      uploadBtn.disabled = false;
+    }
+  });
 </script>
 </body>
 </html>
