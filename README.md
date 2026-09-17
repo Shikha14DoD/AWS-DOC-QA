@@ -1,5 +1,9 @@
 # AWS Document Q&A
 
+**[Live demo](https://claude.ai/artifact/WWJ5fbapwAMZTY2qbZJBDF)** - ask it a
+question, get a real answer from the deployed API with citations. (Static
+page, no backend of its own - it's just a browser client for the API below.)
+
 A small serverless RAG API on AWS. You upload documents, then ask questions about
 them and get back an answer with citations to the chunks it used. The documents
 I'm using are AWS docs, so right now it basically answers AWS questions.
