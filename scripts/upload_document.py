@@ -18,12 +18,16 @@ REGION = "us-east-2"
 
 
 def bucket_name() -> str:
+    # Read the stack output by name rather than "the first S3 bucket in the
+    # stack" - there are two buckets now (documents + the demo site), and
+    # list_stack_resources doesn't guarantee an order that would pick the
+    # right one.
     cfn = boto3.client("cloudformation", region_name=REGION)
-    resources = cfn.list_stack_resources(StackName=STACK_NAME)["StackResourceSummaries"]
-    for r in resources:
-        if r["ResourceType"] == "AWS::S3::Bucket":
-            return r["PhysicalResourceId"]
-    raise SystemExit("No S3 bucket found in stack")
+    outputs = cfn.describe_stacks(StackName=STACK_NAME)["Stacks"][0]["Outputs"]
+    for o in outputs:
+        if o["OutputKey"] == "DocumentsBucketName":
+            return o["OutputValue"]
+    raise SystemExit("DocumentsBucketName output not found - is the stack deployed?")
 
 
 def main() -> None:
