@@ -14,6 +14,7 @@ from aws_cdk import (
     aws_apigatewayv2 as apigw,
     aws_apigatewayv2_integrations as apigw_int,
     aws_cloudwatch as cloudwatch,
+    aws_s3_deployment as s3deploy,
 )
 from constructs import Construct
 
@@ -211,8 +212,43 @@ class InfrastructureStack(Stack):
             alarm_description="A document failed ingestion and landed in the DLQ",
         )
 
+        # --- Demo site -----------------------------------------------------
+
+        # Static demo page (demo/index.html), served straight from S3 - the
+        # project's own thesis is AWS-native, so the demo shouldn't live on
+        # someone else's platform either. A plain S3 website endpoint (no
+        # CloudFront) is enough for a static single-file page and keeps this
+        # in the same free-tier-first pattern as everything else here.
+        self.demo_site_bucket = s3.Bucket(
+            self, "DemoSiteBucket",
+            website_index_document="index.html",
+            public_read_access=True,
+            # BLOCK_ACLS alone still leaves the "block public policy" account
+            # default on (see cdk.json's publicAccessBlockedByDefault flag),
+            # which then refuses the bucket policy public_read_access needs -
+            # a static site's whole point is a public bucket policy, so that
+            # part has to be explicitly opted out of.
+            block_public_access=s3.BlockPublicAccess(
+                block_public_acls=True,
+                ignore_public_acls=True,
+                block_public_policy=False,
+                restrict_public_buckets=False,
+            ),
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+        )
+
+        # Deploys demo/index.html on every `cdk deploy`, so the live site
+        # never drifts from what's committed.
+        s3deploy.BucketDeployment(
+            self, "DemoSiteDeployment",
+            sources=[s3deploy.Source.asset(str(REPO_ROOT / "demo"))],
+            destination_bucket=self.demo_site_bucket,
+        )
+
         # --- Outputs ----------------------------------------------------
 
         CfnOutput(self, "DocumentsBucketName", value=self.documents_bucket.bucket_name)
         CfnOutput(self, "ChunksTableName", value=self.chunks_table.table_name)
         CfnOutput(self, "QueryApiUrl", value=http_api.api_endpoint)
+        CfnOutput(self, "DemoSiteUrl", value=self.demo_site_bucket.bucket_website_url)
