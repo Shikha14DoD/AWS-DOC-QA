@@ -211,7 +211,7 @@ class InfrastructureStack(Stack):
         gemini_key_param.grant_read(self.upload_fn)
         groq_key_param.grant_read(self.upload_fn)
 
-        http_api.add_routes(
+        upload_routes = http_api.add_routes(
             path="/upload",
             methods=[apigw.HttpMethod.POST],
             integration=apigw_int.HttpLambdaIntegration("UploadIntegration", self.upload_fn),
@@ -228,6 +228,13 @@ class InfrastructureStack(Stack):
         # Uploads should be far rarer than questions: 1 req/s (burst 2) for
         # uploads, a looser 10 req/s (burst 20) default for everything else.
         default_stage = http_api.default_stage.node.default_child
+        # The RouteSettings override above references "POST /upload" by name,
+        # which CDK's automatic dependency graph doesn't see (it's a raw
+        # string in an override, not an object reference) - without this,
+        # CloudFormation can try to deploy the stage's route settings before
+        # the route itself exists and fail with "Unable to find Route by key".
+        for route in upload_routes:
+            default_stage.node.add_dependency(route)
         default_stage.add_property_override("DefaultRouteSettings", {
             "ThrottlingRateLimit": 10,
             "ThrottlingBurstLimit": 20,
