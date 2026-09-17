@@ -182,6 +182,57 @@ class InfrastructureStack(Stack):
             integration=apigw_int.HttpLambdaIntegration("QueryIntegration", self.query_fn),
         )
 
+        # --- Upload path ----------------------------------------------------
+
+        # The one public *write* surface in this project - everything else is
+        # read-only or S3-event-triggered. Validates hard before it touches
+        # anything: allowed extension, a size cap, and an LLM topic check
+        # (this demo only accepts AWS-related content) - then writes to the
+        # same documents bucket the ingest Lambda already watches, so
+        # ingestion is unchanged.
+        self.upload_fn = lambda_.Function(
+            self, "UploadFunction",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="upload.handler",
+            code=lambda_.Code.from_asset(str(LAMBDAS / "upload")),
+            layers=[common_layer],
+            timeout=Duration.seconds(20),
+            memory_size=256,
+            environment={
+                "DOCUMENTS_BUCKET_NAME": self.documents_bucket.bucket_name,
+                "GEMINI_API_KEY_PARAM": GEMINI_API_KEY_PARAM,
+                "CHAT_MODEL": "gemini-3.6-flash",
+                "GROQ_API_KEY_PARAM": GROQ_API_KEY_PARAM,
+                "GROQ_CHAT_MODEL": "openai/gpt-oss-20b",
+                "MAX_UPLOAD_BYTES": "20000",
+            },
+        )
+        self.documents_bucket.grant_write(self.upload_fn)
+        gemini_key_param.grant_read(self.upload_fn)
+        groq_key_param.grant_read(self.upload_fn)
+
+        http_api.add_routes(
+            path="/upload",
+            methods=[apigw.HttpMethod.POST],
+            integration=apigw_int.HttpLambdaIntegration("UploadIntegration", self.upload_fn),
+        )
+
+        # Per-route throttling via the L1 escape hatch - the L2 HttpApi/HttpStage
+        # constructs only expose a single stage-wide throttle, but uploads
+        # should be far rarer than questions: 1 req/s (burst 2) for uploads,
+        # a looser 10 req/s (burst 20) default for everything else (query).
+        default_stage = http_api.default_stage.node.default_child
+        default_stage.default_route_settings = apigw.CfnStage.RouteSettingsProperty(
+            throttling_rate_limit=10,
+            throttling_burst_limit=20,
+        )
+        default_stage.route_settings = {
+            "POST /upload": apigw.CfnStage.RouteSettingsProperty(
+                throttling_rate_limit=1,
+                throttling_burst_limit=2,
+            ),
+        }
+
         # --- Alarms ----------------------------------------------------
 
         # No SNS action wired up (that means picking an email/subscriber,
