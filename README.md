@@ -1,8 +1,9 @@
 # AWS Document Q&A
 
-**[Live demo](https://claude.ai/artifact/WWJ5fbapwAMZTY2qbZJBDF)** - ask it a
-question, get a real answer from the deployed API with citations. (Static
-page, no backend of its own - it's just a browser client for the API below.)
+**[Live demo](http://infrastructurestack-demositebucket841d0dc4-9oubllnkntil.s3-website.us-east-2.amazonaws.com)**
+\- ask it a question, get a real answer from the deployed API with citations.
+Served straight from S3 static website hosting (no third-party host, no
+backend of its own beyond the API below).
 
 A small serverless RAG API on AWS. You upload documents, then ask questions about
 them and get back an answer with citations to the chunks it used. The documents
