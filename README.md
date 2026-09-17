@@ -6,8 +6,10 @@ Served straight from S3 static website hosting (no third-party host, no
 backend of its own beyond the API below).
 
 A small serverless RAG API on AWS. You upload documents, then ask questions about
-them and get back an answer with citations to the chunks it used. The documents
-I'm using are AWS docs, so right now it basically answers AWS questions.
+them and get back an answer with citations to the chunks it used. The corpus
+(`corpus/*.md`) is a small set of real AWS documentation excerpts - Lambda
+quotas, DynamoDB basics, S3 storage classes - paraphrased from AWS's own docs
+with the source URL on each file, not invented facts.
 
 I built this mostly to have a real AWS project to point at - Lambda, DynamoDB,
 S3, API Gateway, all defined with CDK. The part I care about is the reliability
@@ -87,15 +89,26 @@ making something up.
 
 ```
 retrieval hit rate:  100%  (8/8)
-answer accuracy:     100%  (8/8)
+answer accuracy:     88%  (7/8)
 hallucination rate:  0%  (0/3)
 ```
 
-(An earlier run scored 62% on answer accuracy - not because retrieval failed,
-but because Gemini's free tier rate-limited mid-run and a few questions
-answered through the Groq fallback with different phrasing than my keyword
-check expected. Retrieval held at 100% through that too. Recorded both runs
-rather than only keeping the good one - see `INTERVIEW_NOTES.md`.)
+Retrieval has been 100% across every run. Answer accuracy has moved around
+run to run (as low as 62%) - not from wrong retrieval, but from two separate
+harness issues, both fixed rather than papered over by re-running until the
+score looked good:
+
+1. Gemini's free tier rate-limits under back-to-back calls, so some questions
+   answer through the Groq fallback with different phrasing than my exact
+   keyword check expected.
+2. Both LLMs favor typographically "correct" Unicode punctuation over plain
+   ASCII - a narrow no-break space in "400 KB", a non-breaking hyphen in
+   "on-demand" - which an exact-string match was wrongly failing. The eval
+   script now normalizes both before comparing.
+
+The one remaining miss is a genuine limitation of keyword matching, not a
+bug: a correct answer paraphrased using different words than my expected
+keyword. Full history in `INTERVIEW_NOTES.md`.
 
 ## IAM
 
