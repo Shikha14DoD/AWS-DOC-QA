@@ -161,9 +161,19 @@ class InfrastructureStack(Stack):
 
         # HTTP API (API Gateway v2): cheaper and lower latency than REST API,
         # and enough for a single JSON POST route.
+        #
+        # CORS wide open (allow_origins=["*"]) on purpose: the endpoint is
+        # already unauthenticated and public, so restricting the browser
+        # origin adds no real security - anyone can already call it directly.
+        # It just lets a browser-hosted demo page call it too.
         http_api = apigw.HttpApi(
             self, "QueryApi",
             description="AWS Document Q&A - query endpoint",
+            cors_preflight=apigw.CorsPreflightOptions(
+                allow_origins=["*"],
+                allow_methods=[apigw.CorsHttpMethod.POST],
+                allow_headers=["content-type"],
+            ),
         )
         http_api.add_routes(
             path="/query",
