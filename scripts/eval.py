@@ -25,6 +25,17 @@ from pathlib import Path
 
 import boto3
 
+# LLMs like to put a narrow no-break space (U+202F) between a number and its
+# unit ("400 KB") instead of a plain ASCII space - typographically
+# correct, but an exact-string keyword check would call a genuinely right
+# answer wrong over it. Collapse every kind of whitespace to a single space
+# before comparing.
+_WS = re.compile(r"\s+")
+
+
+def _normalize(text: str) -> str:
+    return _WS.sub(" ", text)
+
 STACK_NAME = "InfrastructureStack"
 REGION = "us-east-2"
 QUESTIONS_PATH = Path(__file__).resolve().parents[1] / "eval" / "questions.json"
@@ -91,8 +102,9 @@ def run() -> None:
 
         if q["type"] == "in_corpus":
             row["retrieval_hit"] = q["expected_source"] in sources_hit
+            normalized_answer = _normalize(answer).lower()
             row["answer_correct"] = any(
-                kw.lower() in answer.lower() for kw in q["expected_keywords"]
+                _normalize(kw).lower() in normalized_answer for kw in q["expected_keywords"]
             )
         else:  # out_of_scope
             row["hallucinated"] = not looks_like_decline(answer)
