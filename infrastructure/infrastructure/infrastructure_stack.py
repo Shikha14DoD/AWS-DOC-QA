@@ -217,21 +217,27 @@ class InfrastructureStack(Stack):
             integration=apigw_int.HttpLambdaIntegration("UploadIntegration", self.upload_fn),
         )
 
-        # Per-route throttling via the L1 escape hatch - the L2 HttpApi/HttpStage
-        # constructs only expose a single stage-wide throttle, but uploads
-        # should be far rarer than questions: 1 req/s (burst 2) for uploads,
-        # a looser 10 req/s (burst 20) default for everything else (query).
+        # Per-route throttling via raw property overrides - the L2 HttpApi/
+        # HttpStage constructs only expose a single stage-wide throttle, and
+        # the typed L1 RouteSettingsProperty renders camelCase keys that this
+        # resource's own CloudFormation handler rejects (it wants PascalCase
+        # here even though every top-level ApiGatewayV2 property is
+        # camelCase - a real AWS inconsistency, confirmed by deploying it and
+        # reading the resulting error). add_property_override bypasses the
+        # typed property entirely and writes the exact JSON keys wanted.
+        # Uploads should be far rarer than questions: 1 req/s (burst 2) for
+        # uploads, a looser 10 req/s (burst 20) default for everything else.
         default_stage = http_api.default_stage.node.default_child
-        default_stage.default_route_settings = apigw.CfnStage.RouteSettingsProperty(
-            throttling_rate_limit=10,
-            throttling_burst_limit=20,
-        )
-        default_stage.route_settings = {
-            "POST /upload": apigw.CfnStage.RouteSettingsProperty(
-                throttling_rate_limit=1,
-                throttling_burst_limit=2,
-            ),
-        }
+        default_stage.add_property_override("DefaultRouteSettings", {
+            "ThrottlingRateLimit": 10,
+            "ThrottlingBurstLimit": 20,
+        })
+        default_stage.add_property_override("RouteSettings", {
+            "POST /upload": {
+                "ThrottlingRateLimit": 1,
+                "ThrottlingBurstLimit": 2,
+            },
+        })
 
         # --- Alarms ----------------------------------------------------
 
