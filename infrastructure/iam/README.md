@@ -54,3 +54,28 @@ aws iam attach-user-policy \
   --user-name shikha-dev \
   --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
 ```
+
+## Updating the policy
+
+The policy has needed one addition since it was first scoped: a
+`CdkStackRecovery` statement granting `cloudformation:DescribeStackEvents`
+and `cloudformation:ContinueUpdateRollback` on this stack only. `cdk deploy`
+normally never touches CloudFormation directly - it assumes `cfn-exec-role`
+for that - but a stack stuck in `UPDATE_ROLLBACK_FAILED` (which happened once,
+from an ApiGatewayV2 resource that failed to roll back cleanly) can't be
+un-stuck through `cdk deploy` itself; it needs the human identity to call
+`ContinueUpdateRollback` directly. That's the one legitimate exception to "the
+deploying user only needs AssumeRole."
+
+To push an update to the policy after editing the JSON file:
+
+```bash
+aws iam create-policy-version \
+  --policy-arn arn:aws:iam::761558630882:policy/docqa-shikha-dev-least-privilege \
+  --policy-document file://infrastructure/iam/shikha-dev-least-privilege.json \
+  --set-as-default
+```
+
+IAM keeps up to 5 versions per policy; once you're near that, delete an old
+non-default version first (`aws iam list-policy-versions` /
+`delete-policy-version`).

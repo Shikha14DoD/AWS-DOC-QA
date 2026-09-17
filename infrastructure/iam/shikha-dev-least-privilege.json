@@ -28,6 +28,15 @@
       ]
     },
     {
+      "Sid": "CdkStackRecovery",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:ContinueUpdateRollback"
+      ],
+      "Resource": "arn:aws:cloudformation:us-east-2:761558630882:stack/InfrastructureStack/*"
+    },
+    {
       "Sid": "AppApiKeys",
       "Effect": "Allow",
       "Action": ["ssm:GetParameter", "ssm:PutParameter"],
