@@ -1,0 +1,447 @@
+<title>AWS Doc Q&A</title>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --surface: #ffffff;
+    --surface-2: #eef2f9;
+    --border: #d7dfec;
+    --text: #16233a;
+    --text-dim: #57678a;
+    --accent: #0e7c8c;
+    --accent-strong: #0a5f6c;
+    --citation: #b4740c;
+    --citation-bg: #fbf1de;
+    --good: #2f8f3a;
+    --bad: #c1392b;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
+    --sans: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0a1628;
+      --surface: #101f38;
+      --surface-2: #16294a;
+      --border: #23375c;
+      --text: #e8edf5;
+      --text-dim: #93a5c4;
+      --accent: #5ec8d8;
+      --accent-strong: #8fe3ef;
+      --citation: #e8b768;
+      --citation-bg: #2a2213;
+      --good: #6cc46a;
+      --bad: #e0645a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0a1628;
+    --surface: #101f38;
+    --surface-2: #16294a;
+    --border: #23375c;
+    --text: #e8edf5;
+    --text-dim: #93a5c4;
+    --accent: #5ec8d8;
+    --accent-strong: #8fe3ef;
+    --citation: #e8b768;
+    --citation-bg: #2a2213;
+    --good: #6cc46a;
+    --bad: #e0645a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    display: flex;
+    justify-content: center;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 28px 28px;
+    background-position: -1px -1px;
+  }
+  .app {
+    width: 100%;
+    max-width: 720px;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 20px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    gap: 16px;
+  }
+
+  header {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    background: var(--bg);
+    padding-block: 6px 4px;
+    z-index: 5;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0 0 4px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .live-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--good);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent);
+    flex: none;
+  }
+  .subhead {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  .stack-tag {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .turn { display: flex; flex-direction: column; gap: 8px; }
+  .q-bubble {
+    align-self: flex-end;
+    max-width: 88%;
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 500;
+    padding: 9px 14px;
+    border-radius: 14px 14px 3px 14px;
+    font-size: 0.92rem;
+    line-height: 1.4;
+  }
+  :root:not([data-theme="light"]) .q-bubble,
+  :root[data-theme="dark"] .q-bubble { color: #06222a; }
+
+  .a-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px 14px 14px 14px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 1px 2px rgba(10, 22, 40, 0.04);
+  }
+  .a-text {
+    font-size: 0.95rem;
+    line-height: 1.55;
+  }
+  .a-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+  .provider-pill {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    padding: 2px 7px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .provider-pill.gemini { color: var(--accent-strong); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .provider-pill.groq { color: var(--citation); border-color: color-mix(in srgb, var(--citation) 45%, var(--border)); }
+
+  .citations {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--border);
+  }
+  .citation-chip {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    background: var(--citation-bg);
+    color: var(--citation);
+    border: 1px solid color-mix(in srgb, var(--citation) 35%, transparent);
+    border-radius: 5px;
+    padding: 3px 8px;
+    white-space: nowrap;
+  }
+
+  .error-card {
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, var(--border));
+    background: color-mix(in srgb, var(--bad) 8%, var(--surface));
+    color: var(--bad);
+    border-radius: 3px 14px 14px 14px;
+    padding: 12px 16px;
+    font-size: 0.88rem;
+  }
+
+  .loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    padding: 4px 2px;
+  }
+  .spinner {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+    flex: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+  .examples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .example-chip {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 20px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  .example-chip:hover { border-color: var(--accent); color: var(--accent-strong); }
+  .example-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  form {
+    position: sticky;
+    bottom: env(safe-area-inset-bottom, 0px);
+    display: flex;
+    gap: 8px;
+    background: var(--bg);
+    padding-top: 8px;
+  }
+  textarea {
+    flex: 1;
+    resize: none;
+    font-family: var(--sans);
+    font-size: 0.92rem;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    line-height: 1.4;
+    min-height: 42px;
+    max-height: 120px;
+  }
+  textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button[type="submit"] {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 0.82rem;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 10px;
+    padding: 0 18px;
+    cursor: pointer;
+  }
+  :root:not([data-theme="light"]) button[type="submit"],
+  :root[data-theme="dark"] button[type="submit"] { color: #06222a; }
+  button[type="submit"]:disabled { opacity: 0.5; cursor: default; }
+  button[type="submit"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .footnote {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    text-align: center;
+    padding-top: 2px;
+  }
+  .footnote a { color: var(--accent-strong); }
+</style>
+
+<div class="app">
+  <header>
+    <h1><span class="live-dot" aria-hidden="true"></span>AWS Doc Q&amp;A</h1>
+    <div class="subhead">
+      <span>Live API</span>
+      <span class="stack-tag">Lambda</span>
+      <span class="stack-tag">DynamoDB</span>
+      <span class="stack-tag">API Gateway</span>
+      <span class="stack-tag">Gemini + Groq</span>
+    </div>
+  </header>
+
+  <main id="log"></main>
+
+  <div id="examples" class="examples"></div>
+
+  <form id="form">
+    <textarea id="input" rows="1" placeholder="Ask about the corpus (Lambda, DynamoDB, S3 basics)&hellip;" required></textarea>
+    <button type="submit" id="send">Ask</button>
+  </form>
+  <div class="footnote">
+    Answers only from three short AWS-facts docs, not the whole internet &mdash;
+    ask something out of scope and it should say so, not guess.
+  </div>
+</div>
+
+<script>
+  const API_URL = "https://y1ivyu5swg.execute-api.us-east-2.amazonaws.com/query";
+
+  const EXAMPLES = [
+    "What is the maximum Lambda timeout?",
+    "How much memory can a Lambda function have?",
+    "What is the max size of a DynamoDB item?",
+    "How many nines of durability does S3 offer?",
+    "What is the price of a Tesla Model 3?",
+  ];
+
+  const log = document.getElementById("log");
+  const form = document.getElementById("form");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const examplesEl = document.getElementById("examples");
+
+  function renderExamples() {
+    examplesEl.innerHTML = "";
+    for (const q of EXAMPLES) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "example-chip";
+      b.textContent = q;
+      b.addEventListener("click", () => ask(q));
+      examplesEl.appendChild(b);
+    }
+  }
+
+  function addQuestion(question) {
+    const turn = document.createElement("div");
+    turn.className = "turn";
+    turn.innerHTML = `<div class="q-bubble"></div>`;
+    turn.querySelector(".q-bubble").textContent = question;
+    log.appendChild(turn);
+    log.scrollIntoView({ block: "end" });
+    return turn;
+  }
+
+  function addLoading(turn) {
+    const el = document.createElement("div");
+    el.className = "loading";
+    el.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>asking the live API&hellip; (cold Lambda + LLM call, can take a few seconds)</span>`;
+    turn.appendChild(el);
+    return el;
+  }
+
+  function renderAnswer(turn, loadingEl, data, latencyMs) {
+    loadingEl.remove();
+    const card = document.createElement("div");
+    card.className = "a-card";
+
+    const text = document.createElement("div");
+    text.className = "a-text";
+    text.textContent = data.answer || "(no answer returned)";
+    card.appendChild(text);
+
+    const meta = document.createElement("div");
+    meta.className = "a-meta";
+    if (data.provider) {
+      const pill = document.createElement("span");
+      pill.className = "provider-pill " + data.provider;
+      pill.textContent = data.provider;
+      meta.appendChild(pill);
+    }
+    const lat = document.createElement("span");
+    lat.textContent = latencyMs + "ms";
+    meta.appendChild(lat);
+    card.appendChild(meta);
+
+    if (data.citations && data.citations.length) {
+      const cites = document.createElement("div");
+      cites.className = "citations";
+      for (const c of data.citations) {
+        const chip = document.createElement("span");
+        chip.className = "citation-chip";
+        chip.textContent = `[${c.marker}] ${c.source_key} · chunk ${c.chunk_id} · ${c.score}`;
+        cites.appendChild(chip);
+      }
+      card.appendChild(cites);
+    }
+
+    turn.appendChild(card);
+    log.scrollIntoView({ block: "end" });
+  }
+
+  function renderError(turn, loadingEl, message) {
+    loadingEl.remove();
+    const card = document.createElement("div");
+    card.className = "error-card";
+    card.textContent = message;
+    turn.appendChild(card);
+  }
+
+  async function ask(question) {
+    sendBtn.disabled = true;
+    const turn = addQuestion(question);
+    const loadingEl = addLoading(turn);
+    const started = performance.now();
+    try {
+      const resp = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      const latencyMs = Math.round(performance.now() - started);
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        renderError(turn, loadingEl, body.error
+          ? `The API returned an error: ${body.error}`
+          : `The API returned HTTP ${resp.status}. The free-tier backend may be cold or rate-limited - try again in a moment.`);
+        return;
+      }
+      const data = await resp.json();
+      renderAnswer(turn, loadingEl, data, latencyMs);
+    } catch (err) {
+      renderError(turn, loadingEl,
+        "Couldn't reach the API. It's a real AWS backend on the free tier, so it can be briefly unavailable - try again shortly.");
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q) return;
+    input.value = "";
+    ask(q);
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  renderExamples();
+  // show the page doing something real on first load, not an empty shell
+  ask(EXAMPLES[0]);
+</script>
