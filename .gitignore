@@ -31,3 +31,9 @@ Thumbs.db
 PROJECT_HANDOFF.md
 INTERVIEW_NOTES.md
 CLAUDE.md
+
+# Vendored third-party deps for the Lambda layer (see
+# lambdas/layers/common/requirements.txt) - reproducible via pip install,
+# not committed, same reasoning as venv/.
+lambdas/layers/common/python/pypdf/
+lambdas/layers/common/python/pypdf-*.dist-info/

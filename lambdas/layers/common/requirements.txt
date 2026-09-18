@@ -1,0 +1,4 @@
+# Vendored into python/ before deploy - see README "Running it".
+# Pure Python, no C extension, so a plain pip install (any OS) produces
+# files that run fine on Lambda's Linux runtime.
+pypdf>=5.0,<6.0
