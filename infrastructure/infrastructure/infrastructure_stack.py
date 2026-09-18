@@ -172,7 +172,7 @@ class InfrastructureStack(Stack):
             description="AWS Document Q&A - query endpoint",
             cors_preflight=apigw.CorsPreflightOptions(
                 allow_origins=["*"],
-                allow_methods=[apigw.CorsHttpMethod.POST],
+                allow_methods=[apigw.CorsHttpMethod.POST, apigw.CorsHttpMethod.GET],
                 allow_headers=["content-type"],
             ),
         )
@@ -180,6 +180,31 @@ class InfrastructureStack(Stack):
             path="/query",
             methods=[apigw.HttpMethod.POST],
             integration=apigw_int.HttpLambdaIntegration("QueryIntegration", self.query_fn),
+        )
+
+        # --- Documents listing path -----------------------------------------
+
+        # GET /documents - what's actually in the corpus right now, so the
+        # demo page can show visitors what they can ask about instead of
+        # them guessing. No LLM call, no shared layer - a plain DynamoDB
+        # scan is cheap enough on its own.
+        self.documents_fn = lambda_.Function(
+            self, "DocumentsFunction",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="documents.handler",
+            code=lambda_.Code.from_asset(str(LAMBDAS / "documents")),
+            timeout=Duration.seconds(10),
+            memory_size=256,
+            environment={"CHUNKS_TABLE_NAME": self.chunks_table.table_name},
+        )
+        self.chunks_table.grant_read_data(self.documents_fn)
+
+        http_api.add_routes(
+            path="/documents",
+            methods=[apigw.HttpMethod.GET],
+            integration=apigw_int.HttpLambdaIntegration(
+                "DocumentsIntegration", self.documents_fn
+            ),
         )
 
         # --- Upload path ----------------------------------------------------

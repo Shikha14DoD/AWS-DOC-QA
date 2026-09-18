@@ -113,6 +113,35 @@
     padding: 1px 6px;
   }
 
+  .kb-panel {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+  }
+  .kb-label {
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .kb-docs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .kb-doc {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    color: var(--text);
+  }
+  .kb-doc .kb-count {
+    color: var(--text-dim);
+  }
+
   main {
     flex: 1;
     display: flex;
@@ -363,6 +392,10 @@
       <span class="stack-tag">API Gateway</span>
       <span class="stack-tag">Gemini + Groq</span>
     </div>
+    <div class="kb-panel">
+      <div class="kb-label">Knowledge base &mdash; only these documents are answerable:</div>
+      <div class="kb-docs" id="kbDocs">loading&hellip;</div>
+    </div>
   </header>
 
   <main id="log"></main>
@@ -400,6 +433,7 @@
   const API_BASE = "https://y1ivyu5swg.execute-api.us-east-2.amazonaws.com";
   const API_URL = API_BASE + "/query";
   const UPLOAD_URL = API_BASE + "/upload";
+  const DOCUMENTS_URL = API_BASE + "/documents";
   const MAX_UPLOAD_BYTES = 20000;
   const ALLOWED_EXT = [".txt", ".md", ".markdown", ".rst"];
 
@@ -538,6 +572,31 @@
     }
   });
 
+  const kbDocsEl = document.getElementById("kbDocs");
+
+  async function refreshKnowledgeBase() {
+    try {
+      const resp = await fetch(DOCUMENTS_URL);
+      if (!resp.ok) throw new Error("bad status");
+      const data = await resp.json();
+      const docs = data.documents || [];
+      kbDocsEl.innerHTML = "";
+      if (!docs.length) {
+        kbDocsEl.textContent = "nothing ingested yet";
+        return;
+      }
+      for (const d of docs) {
+        const chip = document.createElement("span");
+        chip.className = "kb-doc";
+        chip.innerHTML = `${d.source_key} <span class="kb-count">(${d.chunk_count} chunk${d.chunk_count === 1 ? "" : "s"})</span>`;
+        kbDocsEl.appendChild(chip);
+      }
+    } catch (err) {
+      kbDocsEl.textContent = "couldn't load - the API may be cold, try refreshing";
+    }
+  }
+
+  refreshKnowledgeBase();
   renderExamples();
   // show the page doing something real on first load, not an empty shell
   ask(EXAMPLES[0]);
@@ -598,6 +657,9 @@
       } else {
         setUploadStatus("good", body.message || "accepted");
         fileInput.value = "";
+        // ingestion (chunk + embed + write) happens async after this
+        // response, so the knowledge-base panel won't show it immediately
+        setTimeout(refreshKnowledgeBase, 6000);
       }
     } catch (err) {
       setUploadStatus("bad", "couldn't reach the API - try again shortly");
