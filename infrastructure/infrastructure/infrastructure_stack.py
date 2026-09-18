@@ -214,21 +214,24 @@ class InfrastructureStack(Stack):
         # anything: allowed extension, a size cap, and an LLM topic check
         # (this demo only accepts AWS-related content) - then writes to the
         # same documents bucket the ingest Lambda already watches, so
-        # ingestion is unchanged.
+        # ingestion is unchanged. PDF support means parsing a real file
+        # (pypdf, vendored in the shared layer) before that check, so this
+        # gets more memory/time than the other lightweight Lambdas.
         self.upload_fn = lambda_.Function(
             self, "UploadFunction",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="upload.handler",
             code=lambda_.Code.from_asset(str(LAMBDAS / "upload")),
             layers=[common_layer],
-            timeout=Duration.seconds(20),
-            memory_size=256,
+            timeout=Duration.seconds(30),
+            memory_size=512,
             environment={
                 "DOCUMENTS_BUCKET_NAME": self.documents_bucket.bucket_name,
                 "GEMINI_API_KEY_PARAM": GEMINI_API_KEY_PARAM,
                 "CHAT_MODEL": "gemini-3.6-flash",
                 "GROQ_API_KEY_PARAM": GROQ_API_KEY_PARAM,
                 "GROQ_CHAT_MODEL": "openai/gpt-oss-20b",
+                "MAX_UPLOAD_PDF_BYTES": "2000000",
                 "MAX_UPLOAD_BYTES": "20000",
             },
         )
