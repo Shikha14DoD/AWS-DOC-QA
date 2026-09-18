@@ -406,13 +406,14 @@
     <summary>Upload a document</summary>
     <div class="upload-body">
       <div class="upload-hint">
-        .txt or .md only, under 20 KB, and it has to actually be about AWS -
-        this demo checks the content with an LLM and rejects anything else.
-        Accepted files get chunked, embedded, and become askable in a few
-        seconds.
+        .txt, .md, or .pdf (text under 20 KB, PDFs under 2 MB - and PDFs need
+        a real text layer, this can't OCR a scanned page), and it has to
+        actually be about AWS - this demo checks the content with an LLM and
+        rejects anything else. Accepted files get chunked, embedded, and
+        become askable in a few seconds.
       </div>
       <div class="upload-row">
-        <input type="file" id="fileInput" accept=".txt,.md,.markdown,.rst">
+        <input type="file" id="fileInput" accept=".txt,.md,.markdown,.rst,.pdf">
         <button type="button" class="secondary" id="uploadBtn">Upload</button>
       </div>
       <div id="uploadStatus" class="upload-status" hidden></div>
@@ -435,7 +436,10 @@
   const UPLOAD_URL = API_BASE + "/upload";
   const DOCUMENTS_URL = API_BASE + "/documents";
   const MAX_UPLOAD_BYTES = 20000;
-  const ALLOWED_EXT = [".txt", ".md", ".markdown", ".rst"];
+  const MAX_UPLOAD_PDF_BYTES = 2000000;
+  const TEXT_EXT = [".txt", ".md", ".markdown", ".rst"];
+  const PDF_EXT = [".pdf"];
+  const ALLOWED_EXT = TEXT_EXT.concat(PDF_EXT);
 
   const EXAMPLES = [
     "What is the maximum Lambda timeout?",
@@ -622,6 +626,17 @@
     });
   }
 
+  function readFileAsBase64(file) {
+    // PDFs are binary; JSON isn't. readAsDataURL gives us
+    // "data:application/pdf;base64,AAAA..." - strip everything before the comma.
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
   uploadBtn.addEventListener("click", async () => {
     const file = fileInput.files[0];
     if (!file) {
@@ -633,29 +648,33 @@
       setUploadStatus("bad", `only ${ALLOWED_EXT.join(", ")} files are accepted`);
       return;
     }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setUploadStatus("bad", `file is too large - max ${MAX_UPLOAD_BYTES.toLocaleString()} bytes`);
+    const isPdf = PDF_EXT.includes(ext);
+    const maxBytes = isPdf ? MAX_UPLOAD_PDF_BYTES : MAX_UPLOAD_BYTES;
+    if (file.size > maxBytes) {
+      setUploadStatus("bad", `file is too large - max ${maxBytes.toLocaleString()} bytes`);
       return;
     }
 
     uploadBtn.disabled = true;
     setUploadStatus(null, "uploading, then checking it's actually AWS-related…");
     try {
-      const content = await readFileAsText(file);
+      const reqBody = isPdf
+        ? { filename: file.name, content_base64: await readFileAsBase64(file) }
+        : { filename: file.name, content: await readFileAsText(file) };
       const resp = await fetch(UPLOAD_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: file.name, content }),
+        body: JSON.stringify(reqBody),
       });
-      const body = await resp.json().catch(() => ({}));
+      const respBody = await resp.json().catch(() => ({}));
       if (resp.status === 429) {
         setUploadStatus("bad", "too many uploads too quickly - wait a moment and try again");
       } else if (resp.status === 422) {
-        setUploadStatus("bad", body.error || "rejected: doesn't look AWS-related");
+        setUploadStatus("bad", respBody.error || "rejected: doesn't look AWS-related");
       } else if (!resp.ok) {
-        setUploadStatus("bad", body.error || `upload failed (HTTP ${resp.status})`);
+        setUploadStatus("bad", respBody.error || `upload failed (HTTP ${resp.status})`);
       } else {
-        setUploadStatus("good", body.message || "accepted");
+        setUploadStatus("good", respBody.message || "accepted");
         fileInput.value = "";
         // ingestion (chunk + embed + write) happens async after this
         // response, so the knowledge-base panel won't show it immediately
