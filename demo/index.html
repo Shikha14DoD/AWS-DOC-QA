@@ -579,6 +579,9 @@
   const kbDocsEl = document.getElementById("kbDocs");
 
   async function refreshKnowledgeBase() {
+    // returns the doc list on success, null on failure - callers that need
+    // to know whether a specific document showed up use the return value;
+    // the panel itself is repainted here either way.
     try {
       const resp = await fetch(DOCUMENTS_URL);
       if (!resp.ok) throw new Error("bad status");
@@ -587,7 +590,7 @@
       kbDocsEl.innerHTML = "";
       if (!docs.length) {
         kbDocsEl.textContent = "nothing ingested yet";
-        return;
+        return docs;
       }
       for (const d of docs) {
         const chip = document.createElement("span");
@@ -595,9 +598,40 @@
         chip.innerHTML = `${d.source_key} <span class="kb-count">(${d.chunk_count} chunk${d.chunk_count === 1 ? "" : "s"})</span>`;
         kbDocsEl.appendChild(chip);
       }
+      return docs;
     } catch (err) {
       kbDocsEl.textContent = "couldn't load - the API may be cold, try refreshing";
+      return null;
     }
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // After an accepted upload, ingestion (chunk + embed + write) happens
+  // async - poll for the document to actually show up instead of a single
+  // blind refresh, which either lied by omission (still processing) or went
+  // stale forever (it failed and landed in the DLQ - see INTERVIEW_NOTES).
+  async function waitForIngestion(sourceKey) {
+    const POLL_EVERY_MS = 3000;
+    const MAX_WAIT_MS = 45000;
+    const deadline = Date.now() + MAX_WAIT_MS;
+
+    while (Date.now() < deadline) {
+      await sleep(POLL_EVERY_MS);
+      const docs = await refreshKnowledgeBase();
+      if (docs && docs.some((d) => d.source_key === sourceKey)) {
+        setUploadStatus("good", `${sourceKey} is indexed and ready to ask about`);
+        return;
+      }
+    }
+    setUploadStatus(
+      "bad",
+      `${sourceKey} hasn't shown up after ${Math.round(MAX_WAIT_MS / 1000)}s - it may still be ` +
+      "processing, or it hit an error during ingestion (this demo runs on free-tier APIs, which " +
+      "rate-limit under load). It's not lost - check back in a bit, or try re-uploading."
+    );
   }
 
   refreshKnowledgeBase();
@@ -674,11 +708,11 @@
       } else if (!resp.ok) {
         setUploadStatus("bad", respBody.error || `upload failed (HTTP ${resp.status})`);
       } else {
-        setUploadStatus("good", respBody.message || "accepted");
+        setUploadStatus("good", respBody.message || "accepted, waiting for it to be indexed…");
         fileInput.value = "";
-        // ingestion (chunk + embed + write) happens async after this
-        // response, so the knowledge-base panel won't show it immediately
-        setTimeout(refreshKnowledgeBase, 6000);
+        // don't await - let this poll in the background so the button
+        // re-enables right away instead of blocking on up to 45s
+        waitForIngestion(respBody.key || file.name);
       }
     } catch (err) {
       setUploadStatus("bad", "couldn't reach the API - try again shortly");
