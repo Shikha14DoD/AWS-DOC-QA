@@ -18,7 +18,8 @@ sys.path.insert(0, str(ROOT / "lambdas" / "layers" / "common" / "python"))
 sys.path.insert(0, str(ROOT / "lambdas" / "upload"))
 
 import upload  # noqa: E402
-from doc_qa_common import gemini  # noqa: E402
+from doc_qa_common import gemini, pdf_extract  # noqa: E402
+import base64  # noqa: E402
 
 
 def _put(monkeypatch):
@@ -69,3 +70,37 @@ def test_accepts_aws_content(monkeypatch):
     assert resp["statusCode"] == 202
     assert len(calls) == 1
     assert calls[0]["Key"] == "notes.md"
+
+
+def test_pdf_requires_content_base64():
+    resp = upload.handler({"body": json.dumps({"filename": "a.pdf"})}, None)
+    assert resp["statusCode"] == 400
+
+
+def test_pdf_rejects_invalid_base64():
+    resp = upload.handler(
+        {"body": json.dumps({"filename": "a.pdf", "content_base64": "not-base64!!"})}, None
+    )
+    assert resp["statusCode"] == 400
+
+
+def test_pdf_rejects_when_no_text_extracted(monkeypatch):
+    monkeypatch.setattr(pdf_extract, "extract_text", lambda data: "")
+    content_b64 = base64.b64encode(b"%PDF-fake-bytes").decode()
+    resp = upload.handler(
+        {"body": json.dumps({"filename": "scan.pdf", "content_base64": content_b64})}, None
+    )
+    assert resp["statusCode"] == 422
+
+
+def test_pdf_accepts_when_aws_related(monkeypatch):
+    calls = _put(monkeypatch)
+    monkeypatch.setattr(pdf_extract, "extract_text", lambda data: "AWS EC2 instance facts")
+    monkeypatch.setattr(gemini, "generate", lambda prompt, **kw: "YES")
+    content_b64 = base64.b64encode(b"%PDF-fake-bytes").decode()
+    resp = upload.handler(
+        {"body": json.dumps({"filename": "ec2.pdf", "content_base64": content_b64})}, None
+    )
+    assert resp["statusCode"] == 202
+    assert calls[0]["Key"] == "ec2.pdf"
+    assert calls[0]["Body"] == b"%PDF-fake-bytes"

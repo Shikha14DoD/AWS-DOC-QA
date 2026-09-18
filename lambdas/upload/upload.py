@@ -1,33 +1,43 @@
 """Upload Lambda: POST /upload -> validate -> write to the documents bucket.
 
 Invoked by API Gateway (HTTP API, payload format 2.0) with a JSON body:
-{"filename": "notes.md", "content": "..."}.
+  - text files:  {"filename": "notes.md", "content": "..."}
+  - PDF files:   {"filename": "notes.pdf", "content_base64": "..."}
+(PDF is binary, JSON isn't, so it travels as base64 - a browser can't read a
+PDF's bytes as text the way it can a .md file.)
 
 This is the one public-write surface in the whole project (the query API only
 reads), so it validates harder than anything else here:
   1. filename extension must be one the ingest Lambda actually processes
-  2. content size is capped well below what a demo doc needs
+  2. content size is capped well below what a demo doc needs (text and PDF
+     get different caps - PDF overhead means 20 KB is nothing for a real PDF)
   3. content must plausibly be about AWS, checked with a cheap LLM
      classification call (Gemini, falling back to Groq) - a keyword filter
      is easy to fool and easy to have false negatives; a small classification
      prompt is a better fit for "is this topically about AWS" than a regex.
+     For a PDF, the text is extracted first (same pdf_extract helper the
+     ingest Lambda uses) purely to have something to classify - the
+     original PDF bytes, not the extracted text, are what gets stored.
 
 On acceptance it writes straight to the documents bucket, which the existing
 S3 -> ingest Lambda trigger picks up exactly like a CLI-uploaded document -
 no separate ingestion path to maintain.
 """
 
+import base64
 import json
 import os
 import re
 
 import boto3
 
-from doc_qa_common import gemini, groq
+from doc_qa_common import gemini, groq, pdf_extract
 
 BUCKET_NAME = os.environ["DOCUMENTS_BUCKET_NAME"]
-MAX_CONTENT_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "20000"))  # 20 KB
+MAX_TEXT_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "20000"))  # 20 KB
+MAX_PDF_BYTES = int(os.environ.get("MAX_UPLOAD_PDF_BYTES", "2000000"))  # 2 MB
 TEXT_EXTENSIONS = (".txt", ".md", ".markdown", ".rst")
+PDF_EXTENSIONS = (".pdf",)
 
 _s3 = boto3.client("s3")
 
@@ -47,8 +57,8 @@ def _sanitize_filename(name: str) -> str:
     return name.strip("_") or "document.md"
 
 
-def _is_about_aws(content: str) -> bool:
-    prompt = CLASSIFY_PROMPT.format(content=content[:4000])
+def _is_about_aws(text: str) -> bool:
+    prompt = CLASSIFY_PROMPT.format(content=text[:4000])
     try:
         verdict = gemini.generate(prompt, temperature=0.0, timeout=15)
     except Exception as exc:  # noqa: BLE001 - fall back like the query path does
@@ -72,23 +82,51 @@ def handler(event, context):
         return _response(400, {"error": "body must be valid JSON"})
 
     filename = (payload.get("filename") or "").strip()
-    content = payload.get("content") or ""
+    ext_match = re.search(r"\.[^.]+$", filename)
+    ext = ext_match.group(0).lower() if ext_match else ""
 
-    if not filename or not content.strip():
-        return _response(400, {"error": "missing 'filename' or 'content'"})
-
-    ext = re.search(r"\.[^.]+$", filename)
-    if not ext or ext.group(0).lower() not in TEXT_EXTENSIONS:
-        return _response(400, {"error": f"filename must end in one of {TEXT_EXTENSIONS}"})
-
-    content_bytes = content.encode("utf-8")
-    if len(content_bytes) > MAX_CONTENT_BYTES:
+    if not filename:
+        return _response(400, {"error": "missing 'filename'"})
+    if ext not in TEXT_EXTENSIONS + PDF_EXTENSIONS:
         return _response(
-            413, {"error": f"content too large - max {MAX_CONTENT_BYTES} bytes for this demo"}
+            400, {"error": f"filename must end in one of {TEXT_EXTENSIONS + PDF_EXTENSIONS}"}
         )
 
+    if ext in PDF_EXTENSIONS:
+        content_b64 = payload.get("content_base64") or ""
+        if not content_b64.strip():
+            return _response(400, {"error": "missing 'content_base64' for a PDF upload"})
+        try:
+            raw_bytes = base64.b64decode(content_b64, validate=True)
+        except (ValueError, base64.binascii.Error):
+            return _response(400, {"error": "content_base64 is not valid base64"})
+        if len(raw_bytes) > MAX_PDF_BYTES:
+            return _response(
+                413, {"error": f"PDF too large - max {MAX_PDF_BYTES} bytes for this demo"}
+            )
+        try:
+            text_for_classify = pdf_extract.extract_text(raw_bytes)
+        except Exception as exc:  # noqa: BLE001 - not a valid/parseable PDF
+            print(f"pdf extract failed: {type(exc).__name__}: {exc}")
+            return _response(400, {"error": "couldn't read that as a PDF"})
+        if not text_for_classify.strip():
+            return _response(
+                422, {"error": "couldn't find any text in that PDF - scanned/image-only "
+                               "PDFs aren't supported, there's no OCR step here"}
+            )
+    else:
+        content = payload.get("content") or ""
+        if not content.strip():
+            return _response(400, {"error": "missing 'content'"})
+        raw_bytes = content.encode("utf-8")
+        if len(raw_bytes) > MAX_TEXT_BYTES:
+            return _response(
+                413, {"error": f"content too large - max {MAX_TEXT_BYTES} bytes for this demo"}
+            )
+        text_for_classify = content
+
     try:
-        about_aws = _is_about_aws(content)
+        about_aws = _is_about_aws(text_for_classify)
     except Exception as exc:  # noqa: BLE001 - classifier itself is down
         print(f"upload classify failed: {type(exc).__name__}: {exc}")
         return _response(502, {"error": "couldn't verify the document topic, try again"})
@@ -101,7 +139,7 @@ def handler(event, context):
         )
 
     key = _sanitize_filename(filename)
-    _s3.put_object(Bucket=BUCKET_NAME, Key=key, Body=content_bytes)
+    _s3.put_object(Bucket=BUCKET_NAME, Key=key, Body=raw_bytes)
 
     return _response(202, {
         "message": "accepted - it's being chunked, embedded, and indexed now",
