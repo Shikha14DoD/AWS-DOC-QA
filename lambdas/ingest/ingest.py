@@ -20,15 +20,18 @@ import urllib.parse
 
 import boto3
 
-from doc_qa_common import gemini
+from doc_qa_common import gemini, pdf_extract
 
 TABLE_NAME = os.environ["CHUNKS_TABLE_NAME"]
 
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "150"))
 
-# Only these extensions are treated as plain-text documents for now.
+# Plain-text extensions read as UTF-8 directly; PDF goes through pdf_extract
+# first. Same allowlist the upload Lambda validates against.
 TEXT_EXTENSIONS = (".txt", ".md", ".markdown", ".rst")
+PDF_EXTENSIONS = (".pdf",)
+SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS + PDF_EXTENSIONS
 
 _s3 = boto3.client("s3")
 _table = boto3.resource("dynamodb").Table(TABLE_NAME)
@@ -86,15 +89,20 @@ def chunk_text(text: str) -> list[dict]:
 
 def _process_object(bucket: str, key: str) -> int:
     started = time.time()
-    ext = re.search(r"\.[^.]+$", key)
-    if not ext or ext.group(0).lower() not in TEXT_EXTENSIONS:
+    ext_match = re.search(r"\.[^.]+$", key)
+    ext = ext_match.group(0).lower() if ext_match else ""
+    if ext not in SUPPORTED_EXTENSIONS:
         log_ingest(key, 0, started, ok=True, skipped=True)
         return 0
 
     document_id = _document_id_from_key(key)
     try:
         obj = _s3.get_object(Bucket=bucket, Key=key)
-        text = obj["Body"].read().decode("utf-8", errors="replace")
+        raw = obj["Body"].read()
+        if ext in PDF_EXTENSIONS:
+            text = pdf_extract.extract_text(raw)
+        else:
+            text = raw.decode("utf-8", errors="replace")
         chunks = chunk_text(text)
 
         with _table.batch_writer() as batch:
