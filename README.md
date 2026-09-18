@@ -68,6 +68,11 @@ or pgvector if the corpus got large.
 - **A Lambda layer for the shared Gemini/Groq client** - both functions need
   the same embed/generate/retry code, so it lives in one place instead of two
   copies drifting apart.
+- **pypdf, vendored, for PDF text extraction** - the one third-party
+  dependency anywhere in this project (everything else is deliberately
+  stdlib-only). No reasonable way around it - hand-rolling a PDF parser isn't
+  proportionate. It's pure Python, so no compiled-extension/Docker build step
+  is needed to make it run on Lambda's Linux runtime.
 
 - **S3 static website hosting for the demo page, not a third-party host** -
   the whole project's argument is "AWS-native," so the demo shouldn't live
@@ -86,12 +91,21 @@ honest that it's not permanently free the way Lambda/DynamoDB/S3 are.
 
 The only public *write* surface in the project is `POST /upload` - everything
 else is read-only or S3-event-triggered. It validates hard before touching
-anything: allowed extension (`.txt`/`.md`/`.markdown`/`.rst`), a 20 KB size
-cap, and an LLM check that the content is actually AWS-related (rejects with
-HTTP 422 and why if not). Accepted uploads land in the same S3 bucket the CLI
-script uses, so ingestion is identical either way. The route is throttled
-separately from `/query` (1 req/s, burst 2 vs 10 req/s, burst 20) since
-uploads should be rare and each one costs an LLM call.
+anything: allowed extension (`.txt`/`.md`/`.markdown`/`.rst`/`.pdf`), a size
+cap (20 KB text, 2 MB PDF), and an LLM check that the content is actually
+AWS-related (rejects with HTTP 422 and why if not). Accepted uploads land in
+the same S3 bucket the CLI script uses, so ingestion is identical either way.
+The route is throttled separately from `/query` (1 req/s, burst 2 vs 10 req/s,
+burst 20) since uploads should be rare and each one costs an LLM call.
+
+PDFs need a real parsing library - `pypdf`, the one third-party dependency in
+the shared Lambda layer (vendored, not pip-installed at deploy time, since
+it's pure Python with no build step needed). Text is extracted once by the
+upload Lambda just to run the topic check, and again by the ingest Lambda
+after the original PDF bytes land in S3 - same extraction path either way,
+whether a document arrives via the API or the CLI script. No OCR: a
+scanned/image-only PDF has no text layer to extract and gets rejected with a
+clear reason rather than silently indexing nothing.
 
 `GET /documents` lists what's currently in the corpus (document name + chunk
 count, no LLM call) - the demo page's "Knowledge base" panel is just that
@@ -183,6 +197,11 @@ key, and a Groq API key.
 cd infrastructure
 python -m venv .venv && source .venv/Scripts/activate
 pip install -r requirements.txt
+
+# vendor pypdf into the shared Lambda layer (not committed to git, same as
+# any other dependency install - see lambdas/layers/common/requirements.txt)
+cd .. && pip install -r lambdas/layers/common/requirements.txt \
+  -t lambdas/layers/common/python && cd infrastructure
 
 # store the API keys once
 aws ssm put-parameter --name /docqa/gemini-api-key --type SecureString \
