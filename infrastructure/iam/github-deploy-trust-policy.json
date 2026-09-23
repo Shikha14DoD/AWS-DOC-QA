@@ -10,7 +10,7 @@
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:Shikha14DoD/AWS-DOC-QA:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:Shikha14DoD@34702351/AWS-DOC-QA@1360915780:ref:refs/heads/main"
         }
       }
     }
