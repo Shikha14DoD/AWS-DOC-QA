@@ -31,3 +31,44 @@ jobs:
       - run: pip install -r tests/requirements.txt -r lambdas/layers/common/requirements.txt
 
       - run: python -m pytest tests/ -q
+
+  deploy:
+    # Only runs on a push to main, after the tests pass, and only once the
+    # repo variable AWS_DEPLOY_ROLE_ARN exists (see infrastructure/iam/README.md).
+    # Until that role is created this job is skipped rather than failing, so
+    # the workflow stays green.
+    needs: pytest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # lets the job request a short-lived OIDC token; no stored AWS keys
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: pip install -r infrastructure/requirements.txt
+
+      # the shared layer is built from lambdas/layers/common/python, where
+      # pypdf is vendored (gitignored) - same step as the README's local setup
+      - run: pip install -r lambdas/layers/common/requirements.txt -t lambdas/layers/common/python
+
+      - run: npm install -g aws-cdk@2
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - run: cdk deploy InfrastructureStack --require-approval never
+        working-directory: infrastructure
