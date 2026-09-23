@@ -158,6 +158,9 @@ answer accuracy:     88%  (7/8)
 hallucination rate:  0%  (0/3)
 ```
 
+(Latest run is against the current 118-chunk corpus: the three docs plus a real
+62-page VPC PDF. The numbers didn't move when the corpus grew 10x.)
+
 Retrieval has been 100% across every run. Answer accuracy has moved around
 run to run (as low as 62%) - not from wrong retrieval, but from two separate
 harness issues, both fixed rather than papered over by re-running until the
