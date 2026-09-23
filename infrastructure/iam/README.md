@@ -79,3 +79,47 @@ aws iam create-policy-version \
 IAM keeps up to 5 versions per policy; once you're near that, delete an old
 non-default version first (`aws iam list-policy-versions` /
 `delete-policy-version`).
+
+Before changing a policy (or detaching a broader one), simulate the exact
+version against the operations actually used with `iam:SimulateCustomPolicy`
+- a broader attached policy hides every gap in the scoped one. That's how the
+`lambda:ListFunctions` bug (it needs `Resource: "*"`) was found: it had been
+silently useless since the policy was first written.
+
+## GitHub Actions deploy role (CI/CD)
+
+`.github/workflows/tests.yml` runs the tests on every push and PR. Its
+`deploy` job runs `cdk deploy` on a push to `main` after the tests pass, using
+**GitHub OIDC** - GitHub gets a short-lived token and exchanges it for AWS
+credentials, so there are no stored AWS keys anywhere. The job is skipped until
+the repo variable `AWS_DEPLOY_ROLE_ARN` exists, so the workflow stays green
+until this is set up.
+
+The role's permissions (`github-deploy-permissions.json`) are only
+`sts:AssumeRole` on the five CDK bootstrap roles plus two read actions - the
+same small footprint as the human deploy user, since `cdk deploy` does the
+real work through those roles. Its trust policy
+(`github-deploy-trust-policy.json`) only accepts tokens from this repo's
+`main` branch, so a pull request (or a fork) can never deploy.
+
+Creating the role needs IAM permissions that `shikha-dev` deliberately
+doesn't have, so do it once from the console as the root user:
+
+1. **IAM -> Identity providers -> Add provider**: type *OpenID Connect*,
+   provider URL `https://token.actions.githubusercontent.com`, audience
+   `sts.amazonaws.com`. (Skip if it already exists.)
+2. **IAM -> Roles -> Create role**: *Web identity*, provider
+   `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`, GitHub
+   organization `Shikha14DoD`, repository `AWS-DOC-QA`, branch `main`. Skip the
+   managed-policy step, name it `docqa-github-deploy`.
+3. Open the role -> **Add permissions -> Create inline policy -> JSON**, paste
+   `github-deploy-permissions.json`, save. (Optionally compare the role's trust
+   policy with `github-deploy-trust-policy.json` - the wizard should produce the
+   same conditions.)
+4. Copy the role's ARN. In GitHub: **repo -> Settings -> Secrets and variables
+   -> Actions -> Variables -> New repository variable**, name
+   `AWS_DEPLOY_ROLE_ARN`, value the ARN.
+
+The next push to `main` will then deploy. The `deploy` job has not run against
+a real role yet - the build steps were verified in a clean checkout with no AWS
+credentials, but the OIDC exchange itself is untested until this is set up.

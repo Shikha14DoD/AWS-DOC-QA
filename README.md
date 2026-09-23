@@ -185,9 +185,14 @@ project's service footprint was still being figured out. It's now scoped down
 to `infrastructure/iam/shikha-dev-least-privilege.json` - mostly just
 `sts:AssumeRole` on the IAM roles `cdk bootstrap` already created for
 deployment, plus the handful of direct actions actually used day to day (SSM,
-S3 upload, DynamoDB scan/query, CloudWatch Logs, Lambda inspect). Verified by
-removing `AdministratorAccess` entirely and re-running a deploy + the eval
-harness against the scoped policy alone.
+S3 upload and delete, DynamoDB scan/query/delete-item, CloudWatch Logs, Lambda
+inspect, DLQ read). `AdministratorAccess` is detached and stays detached.
+Before detaching it the last time, I simulated the attached policy against the
+real operations (`iam:SimulateCustomPolicy`) - because admin masks every gap
+in a scoped policy - which found a bug that had been there since the policy
+was written (`lambda:ListFunctions` can't be resource-scoped, so scoping it made
+it useless). Then I detached it and re-ran the real commands plus a full
+`cdk deploy` without admin.
 
 One addition since: a deploy that failed mid-update left the stack stuck in
 `UPDATE_ROLLBACK_FAILED`, which needs `cloudformation:ContinueUpdateRollback`
@@ -198,6 +203,20 @@ stack. Recovering also required briefly re-attaching `AdministratorAccess`
 via the AWS root account, since a fully-scoped `shikha-dev` can't grant
 itself new permissions either - a real demonstration of least-privilege
 working exactly as intended, if inconvenient mid-incident.
+
+## CI/CD
+
+GitHub Actions (`.github/workflows/tests.yml`) runs the 24 unit tests on every
+push and pull request - no AWS credentials involved, since nothing in them
+makes a real call. On a push to `main`, after the tests pass, a second job
+runs `cdk deploy` using **GitHub OIDC**: GitHub hands the job a short-lived
+token that AWS exchanges for temporary credentials, so there are no long-lived
+AWS keys stored in the repo settings. The role it assumes can only assume the
+CDK bootstrap roles (same footprint as the deploy user above), and its trust
+policy only accepts this repo's `main` branch - a pull request can't deploy.
+The deploy job stays skipped until the role exists (a repo variable gates it),
+so the workflow is green either way; setup steps are in
+`infrastructure/iam/README.md`.
 
 ## Running it
 
@@ -243,3 +262,7 @@ curl -X POST "$(aws cloudformation describe-stacks --stack-name InfrastructureSt
 - [x] Day 4 - deployed for real, retrieval eval, IAM scoped to least-privilege
 - [x] Bonus - real AWS-doc corpus, self-hosted demo page with upload + a
       live knowledge-base panel, per-route throttling
+- [x] CI - unit tests on every push and PR (GitHub Actions)
+- [ ] CD - deploy on merge via GitHub OIDC: workflow and role policies are
+      written and the build verified; waiting on the IAM role being created
+      (`infrastructure/iam/README.md`)
