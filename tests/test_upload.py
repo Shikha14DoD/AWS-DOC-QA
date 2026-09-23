@@ -93,6 +93,33 @@ def test_pdf_rejects_when_no_text_extracted(monkeypatch):
     assert resp["statusCode"] == 422
 
 
+def test_pdf_over_page_cap_tells_the_uploader(monkeypatch):
+    _put(monkeypatch)
+    monkeypatch.setattr(pdf_extract, "extract_text", lambda data: "AWS VPC facts")
+    monkeypatch.setattr(pdf_extract, "page_count", lambda data: pdf_extract.MAX_PAGES + 12)
+    monkeypatch.setattr(gemini, "generate", lambda prompt, **kw: "YES")
+    content_b64 = base64.b64encode(b"%PDF-fake-bytes").decode()
+    resp = upload.handler(
+        {"body": json.dumps({"filename": "big.pdf", "content_base64": content_b64})}, None
+    )
+    assert resp["statusCode"] == 202
+    msg = json.loads(resp["body"])["message"]
+    assert f"first {pdf_extract.MAX_PAGES} of {pdf_extract.MAX_PAGES + 12} pages" in msg
+
+
+def test_pdf_within_page_cap_has_no_note(monkeypatch):
+    _put(monkeypatch)
+    monkeypatch.setattr(pdf_extract, "extract_text", lambda data: "AWS VPC facts")
+    monkeypatch.setattr(pdf_extract, "page_count", lambda data: 3)
+    monkeypatch.setattr(gemini, "generate", lambda prompt, **kw: "YES")
+    content_b64 = base64.b64encode(b"%PDF-fake-bytes").decode()
+    resp = upload.handler(
+        {"body": json.dumps({"filename": "small.pdf", "content_base64": content_b64})}, None
+    )
+    assert resp["statusCode"] == 202
+    assert "Note" not in json.loads(resp["body"])["message"]
+
+
 def test_pdf_accepts_when_aws_related(monkeypatch):
     calls = _put(monkeypatch)
     monkeypatch.setattr(pdf_extract, "extract_text", lambda data: "AWS EC2 instance facts")

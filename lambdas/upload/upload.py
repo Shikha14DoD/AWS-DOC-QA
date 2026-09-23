@@ -92,6 +92,7 @@ def handler(event, context):
             400, {"error": f"filename must end in one of {TEXT_EXTENSIONS + PDF_EXTENSIONS}"}
         )
 
+    truncation_note = ""
     if ext in PDF_EXTENSIONS:
         content_b64 = payload.get("content_base64") or ""
         if not content_b64.strip():
@@ -113,6 +114,17 @@ def handler(event, context):
             return _response(
                 422, {"error": "couldn't find any text in that PDF - scanned/image-only "
                                "PDFs aren't supported, there's no OCR step here"}
+            )
+        # only the first MAX_PAGES get indexed - say so instead of silently
+        # dropping the rest (this used to be invisible)
+        try:
+            total_pages = pdf_extract.page_count(raw_bytes)
+        except Exception:  # noqa: BLE001 - the note is best-effort, never blocks an upload
+            total_pages = 0
+        if total_pages > pdf_extract.MAX_PAGES:
+            truncation_note = (
+                f" Note: only the first {pdf_extract.MAX_PAGES} of {total_pages} "
+                "pages will be indexed."
             )
     else:
         content = payload.get("content") or ""
@@ -142,6 +154,7 @@ def handler(event, context):
     _s3.put_object(Bucket=BUCKET_NAME, Key=key, Body=raw_bytes)
 
     return _response(202, {
-        "message": "accepted - it's being chunked, embedded, and indexed now",
+        "message": "accepted - it's being chunked, embedded, and indexed now."
+                   + truncation_note,
         "key": key,
     })
