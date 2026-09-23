@@ -99,8 +99,14 @@ def _process_object(bucket: str, key: str) -> int:
     try:
         obj = _s3.get_object(Bucket=bucket, Key=key)
         raw = obj["Body"].read()
+        extra = {}
         if ext in PDF_EXTENSIONS:
             text = pdf_extract.extract_text(raw)
+            total_pages = pdf_extract.page_count(raw)
+            extra = {
+                "pages_total": total_pages,
+                "pages_indexed": min(total_pages, pdf_extract.MAX_PAGES),
+            }
         else:
             text = raw.decode("utf-8", errors="replace")
         chunks = chunk_text(text)
@@ -125,11 +131,11 @@ def _process_object(bucket: str, key: str) -> int:
         log_ingest(key, 0, started, ok=False, error=str(exc))
         raise
 
-    log_ingest(key, len(chunks), started, ok=True)
+    log_ingest(key, len(chunks), started, ok=True, **extra)
     return len(chunks)
 
 
-def log_ingest(key, chunk_count, started, ok, skipped=False, error=None):
+def log_ingest(key, chunk_count, started, ok, skipped=False, error=None, **extra):
     entry = {
         "event": "ingest",
         "key": key,
@@ -137,6 +143,7 @@ def log_ingest(key, chunk_count, started, ok, skipped=False, error=None):
         "skipped": skipped,
         "chunks_written": chunk_count,
         "latency_ms": round((time.time() - started) * 1000),
+        **extra,
     }
     if error:
         entry["error"] = error
