@@ -32,6 +32,7 @@
       "Effect": "Allow",
       "Action": [
         "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResources",
         "cloudformation:ContinueUpdateRollback"
       ],
       "Resource": "arn:aws:cloudformation:us-east-2:761558630882:stack/InfrastructureStack/*"
@@ -62,10 +63,33 @@
       "Effect": "Allow",
       "Action": [
         "lambda:GetFunction",
-        "lambda:ListFunctions",
         "lambda:InvokeFunction"
       ],
       "Resource": "arn:aws:lambda:us-east-2:761558630882:function:InfrastructureStack-*"
+    },
+    {
+      "Sid": "ListLambdas",
+      "Effect": "Allow",
+      "Action": "lambda:ListFunctions",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AppCleanupTestData",
+      "Effect": "Allow",
+      "Action": [
+        "s3:DeleteObject",
+        "dynamodb:DeleteItem"
+      ],
+      "Resource": [
+        "arn:aws:s3:::infrastructurestack-documentsbucket*/*",
+        "arn:aws:dynamodb:us-east-2:761558630882:table/InfrastructureStack-ChunksTable*"
+      ]
+    },
+    {
+      "Sid": "AppInspectDLQ",
+      "Effect": "Allow",
+      "Action": "sqs:GetQueueAttributes",
+      "Resource": "arn:aws:sqs:us-east-2:761558630882:InfrastructureStack-IngestDLQ*"
     },
     {
       "Sid": "AppTailLogs",
