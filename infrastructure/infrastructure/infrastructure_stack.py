@@ -285,6 +285,7 @@ class InfrastructureStack(Stack):
             metric=self.ingest_fn.metric_errors(period=Duration.minutes(5)),
             threshold=1,
             evaluation_periods=1,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             alarm_description="Ingest Lambda raised an error",
         )
         cloudwatch.Alarm(
@@ -292,6 +293,7 @@ class InfrastructureStack(Stack):
             metric=self.query_fn.metric_errors(period=Duration.minutes(5)),
             threshold=1,
             evaluation_periods=1,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             alarm_description="Query Lambda raised an error",
         )
         cloudwatch.Alarm(
@@ -301,6 +303,7 @@ class InfrastructureStack(Stack):
             ),
             threshold=1,
             evaluation_periods=1,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             alarm_description="A document failed ingestion and landed in the DLQ",
         )
 
