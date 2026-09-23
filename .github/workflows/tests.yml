@@ -1,0 +1,33 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    env:
+      # boto3 clients are created at import time in the lambdas; they need a
+      # region to construct but no credentials, since no test makes a real call
+      AWS_DEFAULT_REGION: us-east-2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            tests/requirements.txt
+            lambdas/layers/common/requirements.txt
+
+      # pypdf is vendored into the layer for deploys and gitignored, so a
+      # fresh checkout doesn't have it - install it the normal way here
+      - run: pip install -r tests/requirements.txt -r lambdas/layers/common/requirements.txt
+
+      - run: python -m pytest tests/ -q
