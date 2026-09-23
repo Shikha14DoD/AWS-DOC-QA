@@ -1,5 +1,7 @@
 # AWS Document Q&A
 
+[![tests](https://github.com/Shikha14DoD/AWS-DOC-QA/actions/workflows/tests.yml/badge.svg)](https://github.com/Shikha14DoD/AWS-DOC-QA/actions/workflows/tests.yml)
+
 **[Live demo](http://infrastructurestack-demositebucket841d0dc4-9oubllnkntil.s3-website.us-east-2.amazonaws.com)**
 \- ask it a question, get a real answer from the deployed API with citations.
 Shows a live "knowledge base" panel of exactly which documents are
@@ -106,6 +108,12 @@ after the original PDF bytes land in S3 - same extraction path either way,
 whether a document arrives via the API or the CLI script. No OCR: a
 scanned/image-only PDF has no text layer to extract and gets rejected with a
 clear reason rather than silently indexing nothing.
+
+Only the first 50 pages of a PDF are indexed (`PDF_MAX_PAGES`), to keep the
+work and embedding calls per upload bounded. That cap used to be invisible - a
+real 62-page PDF quietly lost its last 12 pages - so now the upload response
+says "only the first 50 of N pages will be indexed" and the ingest log records
+`pages_total` vs `pages_indexed`.
 
 `GET /documents` lists what's currently in the corpus (document name + chunk
 count, no LLM call) - the demo page's "Knowledge base" panel is just that
