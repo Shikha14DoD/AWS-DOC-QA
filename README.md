@@ -216,7 +216,11 @@ CDK bootstrap roles (same footprint as the deploy user above), and its trust
 policy only accepts this repo's `main` branch - a pull request can't deploy.
 The deploy job stays skipped until the role exists (a repo variable gates it),
 so the workflow is green either way; setup steps are in
-`infrastructure/iam/README.md`.
+`infrastructure/iam/README.md`. The first deploy through it succeeded on
+2026-09-23; getting there needed the trust policy to match GitHub's newer
+token format, which identifies the repo by ID rather than name (found by
+printing the token's claims, since the failure message only said "not
+authorized").
 
 ## Running it
 
@@ -263,6 +267,4 @@ curl -X POST "$(aws cloudformation describe-stacks --stack-name InfrastructureSt
 - [x] Bonus - real AWS-doc corpus, self-hosted demo page with upload + a
       live knowledge-base panel, per-route throttling
 - [x] CI - unit tests on every push and PR (GitHub Actions)
-- [ ] CD - deploy on merge via GitHub OIDC: workflow and role policies are
-      written and the build verified; waiting on the IAM role being created
-      (`infrastructure/iam/README.md`)
+- [x] CD - deploy on merge via GitHub OIDC (first successful run 2026-09-23)

@@ -126,6 +126,6 @@ doesn't have, so do it once from the console as the root user:
    -> Actions -> Variables -> New repository variable**, name
    `AWS_DEPLOY_ROLE_ARN`, value the ARN.
 
-The next push to `main` will then deploy. The `deploy` job has not run against
-a real role yet - the build steps were verified in a clean checkout with no AWS
-credentials, but the OIDC exchange itself is untested until this is set up.
+The next push to `main` will then deploy. This path has been exercised for
+real (first successful OIDC deploy: 2026-09-23), after fixing the trust policy's
+subject as described in step 3.
