@@ -410,7 +410,8 @@
         a real text layer, this can't OCR a scanned page), and it has to
         actually be about AWS - this demo checks the content with an LLM and
         rejects anything else. Accepted files get chunked, embedded, and
-        become askable in a few seconds.
+        become askable - seconds for a short file, a few minutes for a big
+        PDF (only the first 50 pages are indexed).
       </div>
       <div class="upload-row">
         <input type="file" id="fileInput" accept=".txt,.md,.markdown,.rst,.pdf">
@@ -614,8 +615,11 @@
   // blind refresh, which either lied by omission (still processing) or went
   // stale forever (it failed and landed in the DLQ - see INTERVIEW_NOTES).
   async function waitForIngestion(sourceKey) {
-    const POLL_EVERY_MS = 3000;
-    const MAX_WAIT_MS = 45000;
+    // a real 62-page PDF (106 chunks) took ~2.5 min end to end once the free
+    // tier's rate limits and Lambda's own retry were involved, so 45s was
+    // reporting "hasn't shown up" for documents that were fine
+    const POLL_EVERY_MS = 4000;
+    const MAX_WAIT_MS = 180000;
     const deadline = Date.now() + MAX_WAIT_MS;
 
     while (Date.now() < deadline) {
@@ -628,7 +632,7 @@
     }
     setUploadStatus(
       "bad",
-      `${sourceKey} hasn't shown up after ${Math.round(MAX_WAIT_MS / 1000)}s - it may still be ` +
+      `${sourceKey} hasn't shown up after ${Math.round(MAX_WAIT_MS / 60000)} minutes - it may still be ` +
       "processing, or it hit an error during ingestion (this demo runs on free-tier APIs, which " +
       "rate-limit under load). It's not lost - check back in a bit, or try re-uploading."
     );
