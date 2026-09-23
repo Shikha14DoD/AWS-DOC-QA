@@ -1,0 +1,30 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeCdkBootstrapRoles",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-deploy-role-761558630882-us-east-2",
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-file-publishing-role-761558630882-us-east-2",
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-image-publishing-role-761558630882-us-east-2",
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-lookup-role-761558630882-us-east-2",
+        "arn:aws:iam::761558630882:role/cdk-hnb659fds-cfn-exec-role-761558630882-us-east-2"
+      ]
+    },
+    {
+      "Sid": "CdkBootstrapReadState",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "cloudformation:DescribeStacks"
+      ],
+      "Resource": [
+        "arn:aws:ssm:us-east-2:761558630882:parameter/cdk-bootstrap/*",
+        "arn:aws:cloudformation:us-east-2:761558630882:stack/CDKToolkit/*",
+        "arn:aws:cloudformation:us-east-2:761558630882:stack/InfrastructureStack/*"
+      ]
+    }
+  ]
+}
