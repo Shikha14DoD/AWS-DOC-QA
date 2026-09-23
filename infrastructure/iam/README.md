@@ -113,9 +113,15 @@ doesn't have, so do it once from the console as the root user:
    organization `Shikha14DoD`, repository `AWS-DOC-QA`, branch `main`. Skip the
    managed-policy step, name it `docqa-github-deploy`.
 3. Open the role -> **Add permissions -> Create inline policy -> JSON**, paste
-   `github-deploy-permissions.json`, save. (Optionally compare the role's trust
-   policy with `github-deploy-trust-policy.json` - the wizard should produce the
-   same conditions.)
+   `github-deploy-permissions.json`, save.
+   **Then fix the trust policy** (role -> *Trust relationships* -> *Edit trust
+   policy*): replace it with `github-deploy-trust-policy.json`. The wizard
+   writes the older name-based subject (`repo:owner/repo:ref:...`), but GitHub
+   now sends an immutable-ID subject (`repo:owner@<owner-id>/repo@<repo-id>:ref:...`),
+   so a wizard-made role fails with "Not authorized to perform
+   sts:AssumeRoleWithWebIdentity". The ID form is also safer - a renamed or
+   re-created repo can't inherit the role. To see the exact subject your token
+   carries, print its claims from a workflow step as `::notice::` annotations.
 4. Copy the role's ARN. In GitHub: **repo -> Settings -> Secrets and variables
    -> Actions -> Variables -> New repository variable**, name
    `AWS_DEPLOY_ROLE_ARN`, value the ARN.
