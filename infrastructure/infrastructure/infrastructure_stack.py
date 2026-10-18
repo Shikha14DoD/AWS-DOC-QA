@@ -15,6 +15,8 @@ from aws_cdk import (
     aws_apigatewayv2_integrations as apigw_int,
     aws_cloudwatch as cloudwatch,
     aws_s3_deployment as s3deploy,
+    aws_cloudfront as cloudfront,
+    aws_cloudfront_origins as origins,
 )
 from constructs import Construct
 
@@ -309,36 +311,43 @@ class InfrastructureStack(Stack):
 
         # --- Demo site -----------------------------------------------------
 
-        # Static demo page (demo/index.html), served straight from S3 - the
-        # project's own thesis is AWS-native, so the demo shouldn't live on
-        # someone else's platform either. A plain S3 website endpoint (no
-        # CloudFront) is enough for a static single-file page and keeps this
-        # in the same free-tier-first pattern as everything else here.
+        # Static demo page (demo/index.html), served from S3 through
+        # CloudFront - the project's own thesis is AWS-native, so the demo
+        # shouldn't live on someone else's platform. Originally a plain S3
+        # website endpoint (HTTP only, see INTERVIEW_NOTES.md), replaced with
+        # CloudFront so the public link is HTTPS. The bucket itself is now
+        # fully private: CloudFront reads it via Origin Access Control (OAC),
+        # not a public bucket policy, which is also the more standard pattern
+        # than a public static-website bucket.
         self.demo_site_bucket = s3.Bucket(
             self, "DemoSiteBucket",
-            website_index_document="index.html",
-            public_read_access=True,
-            # BLOCK_ACLS alone still leaves the "block public policy" account
-            # default on (see cdk.json's publicAccessBlockedByDefault flag),
-            # which then refuses the bucket policy public_read_access needs -
-            # a static site's whole point is a public bucket policy, so that
-            # part has to be explicitly opted out of.
-            block_public_access=s3.BlockPublicAccess(
-                block_public_acls=True,
-                ignore_public_acls=True,
-                block_public_policy=False,
-                restrict_public_buckets=False,
-            ),
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
         )
 
-        # Deploys demo/index.html on every `cdk deploy`, so the live site
-        # never drifts from what's committed.
+        # CloudFront's own domain (*.cloudfront.net) already serves HTTPS with
+        # a valid cert at no cost - no ACM certificate or custom domain
+        # needed. Data transfer and request free tier (1 TB out, 10M
+        # requests/month) is one of the few AWS free tiers that doesn't expire
+        # after 12 months; irrelevant either way at this project's traffic.
+        self.demo_distribution = cloudfront.Distribution(
+            self, "DemoSiteDistribution",
+            default_root_object="index.html",
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.S3BucketOrigin.with_origin_access_control(self.demo_site_bucket),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+            ),
+        )
+
+        # Deploys demo/index.html on every `cdk deploy`, and invalidates the
+        # CloudFront cache so the live site never serves a stale version of
+        # what's committed.
         s3deploy.BucketDeployment(
             self, "DemoSiteDeployment",
             sources=[s3deploy.Source.asset(str(REPO_ROOT / "demo"))],
             destination_bucket=self.demo_site_bucket,
+            distribution=self.demo_distribution,
+            distribution_paths=["/*"],
         )
 
         # --- Outputs ----------------------------------------------------
@@ -346,4 +355,7 @@ class InfrastructureStack(Stack):
         CfnOutput(self, "DocumentsBucketName", value=self.documents_bucket.bucket_name)
         CfnOutput(self, "ChunksTableName", value=self.chunks_table.table_name)
         CfnOutput(self, "QueryApiUrl", value=http_api.api_endpoint)
-        CfnOutput(self, "DemoSiteUrl", value=self.demo_site_bucket.bucket_website_url)
+        CfnOutput(
+            self, "DemoSiteUrl",
+            value=f"https://{self.demo_distribution.distribution_domain_name}",
+        )
