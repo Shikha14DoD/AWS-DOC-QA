@@ -2,12 +2,13 @@
 
 [![tests](https://github.com/Shikha14DoD/AWS-DOC-QA/actions/workflows/tests.yml/badge.svg)](https://github.com/Shikha14DoD/AWS-DOC-QA/actions/workflows/tests.yml)
 
-**[Live demo](http://infrastructurestack-demositebucket841d0dc4-9oubllnkntil.s3-website.us-east-2.amazonaws.com)**
+**[Live demo](https://dsocz579or6gq.cloudfront.net)**
 \- ask it a question, get a real answer from the deployed API with citations.
 Shows a live "knowledge base" panel of exactly which documents are
 answerable, and you can upload your own (AWS-related content only - it's
-checked). Served straight from S3 static website hosting (no third-party
-host, no backend of its own beyond the API below).
+checked). S3 + CloudFront (no third-party host, no backend of its own beyond
+the API below) - the bucket is private, CloudFront reads it via Origin Access
+Control, and CloudFront's own domain serves HTTPS at no extra cost.
 
 A small serverless RAG API on AWS. You upload documents, then ask questions about
 them and get back an answer with citations to the chunks it used. The corpus
@@ -27,7 +28,7 @@ citations, and a small eval harness run against it (see below).
 
 ```mermaid
 flowchart LR
-    DEMO[Demo page\nS3 static site] -->|POST /upload| APIGW[API Gateway]
+    DEMO[Demo page\nS3 + CloudFront] -->|POST /upload| APIGW[API Gateway]
     DEMO -->|POST /query| APIGW
     DEMO -->|GET /documents| APIGW
 
@@ -76,10 +77,14 @@ or pgvector if the corpus got large.
   proportionate. It's pure Python, so no compiled-extension/Docker build step
   is needed to make it run on Lambda's Linux runtime.
 
-- **S3 static website hosting for the demo page, not a third-party host** -
-  the whole project's argument is "AWS-native," so the demo shouldn't live
-  somewhere else. Plain HTTP (no CloudFront), which is an honest tradeoff for
-  a public read-only page with nothing sensitive on it.
+- **S3 + CloudFront for the demo page, not a third-party host** - the whole
+  project's argument is "AWS-native," so the demo shouldn't live somewhere
+  else. Originally a plain S3 website endpoint (HTTP only - fine for a public
+  read-only page, but a browser still flags it "Not secure"), now a private
+  bucket behind CloudFront: Origin Access Control instead of a public bucket
+  policy, and HTTPS on CloudFront's own domain at no extra cost, since its
+  data-transfer/request free tier doesn't expire after 12 months the way most
+  AWS free tiers do.
 - **An LLM call to gate uploads, not a keyword filter** - "is this document
   about AWS" is a judgment call a regex can't make reliably; a cheap
   classification prompt (same Gemini/Groq client as everything else) can.
