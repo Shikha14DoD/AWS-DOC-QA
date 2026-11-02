@@ -125,15 +125,24 @@ class InfrastructureStack(Stack):
             retry_attempts=2,
         )
 
-        # Least-privilege: write-only to the table, read the handed object,
-        # decrypt the one SSM parameter.
-        self.chunks_table.grant_write_data(self.ingest_fn)
+        # Least-privilege: read+write the table (a delete needs to Query for
+        # the document's existing chunk ids first, not just write new ones),
+        # read the handed object, decrypt the one SSM parameter.
+        self.chunks_table.grant_read_write_data(self.ingest_fn)
         self.documents_bucket.grant_read(self.ingest_fn)
         gemini_key_param.grant_read(self.ingest_fn)
 
-        # S3 -> Lambda: fire on every object create in the bucket.
+        # S3 -> Lambda: fire on every create AND every delete in the bucket.
+        # ObjectRemoved used to go nowhere, which meant deleting a document
+        # from S3 left its chunks fully searchable/citable forever - the one
+        # place the system could keep citing something that no longer
+        # exists. Same function handles both; it branches on eventName.
         self.documents_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(self.ingest_fn),
+        )
+        self.documents_bucket.add_event_notification(
+            s3.EventType.OBJECT_REMOVED,
             s3n.LambdaDestination(self.ingest_fn),
         )
 

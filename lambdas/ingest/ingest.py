@@ -1,12 +1,19 @@
 """Ingest Lambda: S3 upload -> chunk -> embed -> DynamoDB.
 
-Triggered by an S3 ObjectCreated event on the documents bucket. For each
-uploaded document it:
+Triggered by S3 ObjectCreated and ObjectRemoved events on the documents
+bucket (both wired to the same function - see infrastructure_stack.py).
 
+On ObjectCreated:
   1. reads the object from S3
   2. splits the text into overlapping chunks on paragraph boundaries
   3. embeds each chunk with the Gemini gemini-embedding-001 model
   4. writes one item per chunk to the ChunksTable
+
+On ObjectRemoved: deletes every chunk for that document_id from the
+ChunksTable. Without this, removing a file from S3 left its chunks fully
+searchable and citable forever - the one place the system could keep citing
+a document that no longer exists. Found this gap, not told about it; see
+INTERVIEW_NOTES.md.
 
 Gemini access and the SSM-backed API key live in the shared `doc_qa_common`
 layer.
@@ -19,6 +26,7 @@ import time
 import urllib.parse
 
 import boto3
+from boto3.dynamodb.conditions import Key
 
 from doc_qa_common import gemini, pdf_extract
 
@@ -135,15 +143,62 @@ def _process_object(bucket: str, key: str) -> int:
     return len(chunks)
 
 
+def _existing_chunk_keys(document_id: str) -> list[dict]:
+    """All {document_id, chunk_id} keys currently stored for a document."""
+    keys: list[dict] = []
+    kwargs = {
+        "KeyConditionExpression": Key("document_id").eq(document_id),
+        "ProjectionExpression": "document_id, chunk_id",
+    }
+    while True:
+        resp = _table.query(**kwargs)
+        keys.extend({"document_id": i["document_id"], "chunk_id": i["chunk_id"]}
+                    for i in resp.get("Items", []))
+        if "LastEvaluatedKey" not in resp:
+            break
+        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+    return keys
+
+
+def _delete_document(key: str) -> int:
+    """Remove every chunk for the document an S3 key maps to.
+
+    Chunk ids are deterministic (0000, 0001, ...) from the ingest side, but
+    deletion doesn't need to know how many there were - it queries the table
+    for whatever's actually there and removes exactly that, so it's correct
+    even if a prior ingest only partially completed.
+    """
+    started = time.time()
+    document_id = _document_id_from_key(key)
+    try:
+        keys = _existing_chunk_keys(document_id)
+        with _table.batch_writer() as batch:
+            for k in keys:
+                batch.delete_item(Key=k)
+    except Exception as exc:
+        log_delete(key, 0, started, ok=False, error=str(exc))
+        raise
+
+    log_delete(key, len(keys), started, ok=True)
+    return len(keys)
+
+
 def log_ingest(key, chunk_count, started, ok, skipped=False, error=None, **extra):
+    _log("ingest", key, started, ok, chunks_written=chunk_count, skipped=skipped,
+         error=error, **extra)
+
+
+def log_delete(key, chunk_count, started, ok, error=None):
+    _log("delete", key, started, ok, chunks_deleted=chunk_count, error=error)
+
+
+def _log(event_name, key, started, ok, error=None, **fields):
     entry = {
-        "event": "ingest",
+        "event": event_name,
         "key": key,
         "ok": ok,
-        "skipped": skipped,
-        "chunks_written": chunk_count,
         "latency_ms": round((time.time() - started) * 1000),
-        **extra,
+        **fields,
     }
     if error:
         entry["error"] = error
@@ -151,9 +206,13 @@ def log_ingest(key, chunk_count, started, ok, skipped=False, error=None, **extra
 
 
 def handler(event, context):
-    total = 0
+    written = deleted = 0
     for record in event.get("Records", []):
         bucket = record["s3"]["bucket"]["name"]
         key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
-        total += _process_object(bucket, key)
-    return {"chunks_written": total}
+        event_name = record.get("eventName", "")
+        if event_name.startswith("ObjectRemoved"):
+            deleted += _delete_document(key)
+        else:
+            written += _process_object(bucket, key)
+    return {"chunks_written": written, "chunks_deleted": deleted}
