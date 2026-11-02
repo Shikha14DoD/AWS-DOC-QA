@@ -10,10 +10,17 @@ it checks).
 
 ## Why this exists
 
-Nobody assigned this. I wanted a real AWS project I could point at, not a
-tutorial clone, so I built one, deployed it, and kept running it. It has been
-live since September 2026. The people using it are me and a handful of people
-I shared the link with.
+Nobody assigned this. I built it because I kept wasting time on simple AWS
+questions like "what's the max Lambda timeout?" or "how big can a DynamoDB
+item be?" Searching online meant opening several blogs, forum answers and
+old docs, and still having to work out which one was current and correct.
+I wanted one place that answers from the official AWS documentation and
+shows me the exact passage it came from, so I can trust the answer without
+checking five other tabs.
+
+So I built it, deployed it, and kept running it. It has been live since
+September 2026. The people using it are me and a handful of people I shared
+the link with.
 
 The fun part has been that it keeps breaking in ways no tutorial warned me
 about:
