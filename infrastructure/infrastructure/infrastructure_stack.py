@@ -17,6 +17,8 @@ from aws_cdk import (
     aws_s3_deployment as s3deploy,
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
+    aws_events as events,
+    aws_events_targets as targets,
 )
 from constructs import Construct
 
@@ -284,6 +286,35 @@ class InfrastructureStack(Stack):
                 "ThrottlingBurstLimit": 2,
             },
         })
+
+        # --- Reconciliation ---------------------------------------------
+
+        # Safety net for the ObjectRemoved handler above: catches chunks
+        # left behind by a delete that never fired (or was never delivered
+        # as) an S3 notification - e.g. a lifecycle expiration rule. Runs on
+        # a schedule rather than an event; see reconcile.py for the compare-
+        # and-delete logic, shared with ingest.py via doc_qa_common.
+        self.reconcile_fn = lambda_.Function(
+            self, "ReconcileFunction",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="reconcile.handler",
+            code=lambda_.Code.from_asset(str(LAMBDAS / "reconcile")),
+            layers=[common_layer],
+            timeout=Duration.minutes(5),
+            memory_size=256,
+            environment={
+                "CHUNKS_TABLE_NAME": self.chunks_table.table_name,
+                "DOCUMENTS_BUCKET_NAME": self.documents_bucket.bucket_name,
+            },
+        )
+        self.chunks_table.grant_read_write_data(self.reconcile_fn)
+        self.documents_bucket.grant_read(self.reconcile_fn)
+
+        events.Rule(
+            self, "ReconcileSchedule",
+            schedule=events.Schedule.rate(Duration.days(1)),
+            targets=[targets.LambdaFunction(self.reconcile_fn)],
+        )
 
         # --- Alarms ----------------------------------------------------
 
