@@ -33,6 +33,27 @@ Single run, 2026-11-02, recorded as-is (not re-run for a better number).
   and hit its 30 s timeout before falling back. That was a real bug, fixed
   in PR #2 before this run.
 
+## Judge spot-check (2026-11-02, later the same day)
+
+A second run was made only to check the LLM judge, and its numbers don't
+replace the recorded run above. Its answers and verdicts are in
+[answers.json](answers.json). I graded all 14 answered in-corpus rows by hand
+(`human_correct`) against `expected_answer` and the source docs, then ran
+`python scripts/eval.py --agreement`:
+
+```
+judge agreed with the human on 14/14 rows
+```
+
+- The keyword check agreed on 13/14. It marked the LSI answer ("must be
+  defined when the table is created; it cannot be added later") wrong for
+  missing the keyword. The judge and I both marked it right.
+- Answers came 7 from Gemini and 7 from Groq, so the judge wasn't only
+  grading its own provider this time. One out-of-scope request failed with
+  HTTP 502 (Groq tokens/minute again).
+- Limit: every answer in this run was correct, so this shows the judge
+  agrees on right answers. It doesn't show that it catches wrong ones.
+
 Previous run (11 questions, keyword-graded, mostly Gemini): retrieval 8/8,
 answers 7/8, out-of-scope 3/3 declined.
 
