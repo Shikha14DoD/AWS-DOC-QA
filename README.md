@@ -41,6 +41,13 @@ about:
   daily quota. It was per-minute, and the error message was telling me how
   long to wait the whole time. Now the retry reads that hint, and chunks are
   embedded in batches instead of 106 separate calls.
+- **Then batching made it worse.** 106 calls became 2, but the free tier
+  counts every text in a batch, not every call. 100 + 6 texts in the same
+  second broke the 100-per-minute limit on all 3 attempts, and the PDF landed
+  in the dead-letter queue (the alarm emailed me, which is how I knew alerts
+  actually work). Now batches are paced to the quota: the same PDF indexes on
+  the first try in 76 s, where the old one-call-per-chunk version failed once
+  and took about 2 minutes.
 - **The demo link said "Not secure".** It was plain HTTP from S3, so I moved
   it behind CloudFront with HTTPS. Then someone I'd shared it with *still* got
   a browser warning. The certificate was fine (I checked it); random
@@ -58,7 +65,7 @@ about:
   login token's claims and found GitHub had changed its format.
 
 Each one is fixed (or, for the browser warning, understood), covered by the
-46 offline tests that run on every pull request where code was involved, and
+50 offline tests that run on every pull request where code was involved, and
 written up below.
 
 ## What it is
@@ -203,10 +210,15 @@ is also the thing that tells the page where it is.
 - Retry with backoff on every Gemini call, but only for transient failures
   (429/5xx/timeout) - a bad request fails fast instead of retrying a bug 3 times.
   When a 429 says how long to wait (`Retry-After`, or the `retryDelay` in
-  Gemini's error body), the retry waits that long instead of guessing, capped
-  at 20 s so it can't sleep past the Lambda timeout
+  Gemini's error body), the retry waits that long instead of guessing. Each
+  Lambda has its own wait budget (`MAX_RETRY_DELAY`): 20 s for ingest, 2 s for
+  the API Lambdas, where a hint longer than that gives up at once so the
+  Groq fallback still runs inside the 30-second request
 - Ingest embeds a document's chunks in batches (`batchEmbedContents`, up to
-  100 per call) instead of one HTTP call per chunk
+  100 per call) instead of one HTTP call per chunk, paced to 90 texts a minute
+  because the free tier counts texts, not calls. All embeddings finish before
+  any chunk is written, so a failed batch leaves the old chunks untouched and
+  the whole document retries
 - If Gemini's answer call keeps failing, the query Lambda falls back to Groq;
   the response says which provider actually answered
 - SQS dead-letter queue on the ingest Lambda, so a document that fails to
@@ -218,7 +230,8 @@ is also the thing that tells the page where it is.
 - Every request logs one JSON line (latency, success, provider) to CloudWatch;
   three alarms watch ingest errors, query errors, and DLQ depth, and email
   through SNS when they fire (the address is deploy-time config, not in the
-  repo)
+  repo). Both ingest alarms have fired on a real failure and the emails
+  arrived
 
 Deploying this for real (rather than just `cdk synth` passing) surfaced a
 string of real bugs none of which show up in a mocked unit test: a reserved
@@ -270,6 +283,15 @@ What that actually says:
   seconds" hint and ran the query Lambda into its 30-second timeout before it
   could fall back to Groq. The eval found it, I fixed it, and the run above is
   the first one after the fix.
+
+**Who checks the judge?** Later the same day I made a second run only to
+spot-check it (it doesn't replace the number above). I graded all 14 answered
+in-corpus questions by hand, and `eval.py --agreement` compared that to the
+judge: **it agreed with me on 14/14.** The keyword check agreed on 13/14. It
+marked a correct, paraphrased answer wrong, which the judge got right. The
+limit: every answer in that run was correct, so this shows the judge agrees
+on right answers. It doesn't show that it catches wrong ones. Answers and
+grades are in [`eval/answers.json`](eval/answers.json).
 
 **Previous run** (11 questions, keyword-graded, mostly answered by Gemini, on
 the same 118-chunk corpus): retrieval 8/8, answers 7/8, out-of-scope 3/3
@@ -331,7 +353,7 @@ working exactly as intended, if inconvenient mid-incident.
 ```mermaid
 flowchart TD
     DEV[Feature branch] -->|open PR| PR[Pull request]
-    PR --> T1[pytest: 46 offline tests]
+    PR --> T1[pytest: 50 offline tests]
     T1 -->|fail| BLOCK[Merge blocked:<br/>fix and push again]
     BLOCK --> PR
     T1 -->|pass| MERGE[Merge to main]
@@ -348,7 +370,7 @@ branch, and the rule applies to admins too. No approvals are required - it's
 a one-person repo and GitHub doesn't let you approve your own PR - so the
 test check is the gate.
 
-GitHub Actions (`.github/workflows/tests.yml`) runs the 46 unit tests on every
+GitHub Actions (`.github/workflows/tests.yml`) runs the 50 unit tests on every
 push and pull request - no AWS credentials involved, since nothing in them
 makes a real call. On a push to `main`, after the tests pass, a second job
 runs `cdk deploy` using **GitHub OIDC**: GitHub hands the job a short-lived
@@ -416,5 +438,8 @@ curl -X POST "$(aws cloudformation describe-stacks --stack-name InfrastructureSt
       branch protection on `main`, deploy-time API URL for the demo, batched
       embeddings + server retry hints, 19-question LLM-judged eval
 - [x] Record a run of the 19-question eval (2026-11-02, single run, as-is)
+- [x] Pace batched embeddings to the free tier, measured on the 62-page PDF
+- [x] Spot-check the LLM judge by hand (14/14 agreement)
+- [ ] Test whether the judge catches deliberately wrong answers
 - [ ] Keep the eval from competing with the API for the same rate limits
       (judge on a separate quota, or pace the questions)
