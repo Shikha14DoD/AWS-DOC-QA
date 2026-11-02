@@ -38,8 +38,13 @@ flowchart LR
 
     CLI[CLI: upload_document.py] -->|upload doc| S3
     S3 -->|ObjectCreated| ING[Lambda: ingest]
-    ING -->|embed chunks| GEM1[Gemini embeddings]
-    ING -->|write chunks| DDB[(DynamoDB ChunksTable)]
+    S3 -->|ObjectRemoved| ING
+    ING -->|batch-embed chunks| GEM1[Gemini embeddings]
+    ING -->|write / delete chunks| DDB[(DynamoDB ChunksTable)]
+
+    SCHED[EventBridge\ndaily] --> REC[Lambda: reconcile]
+    REC -->|list keys| S3
+    REC -->|delete orphaned chunks| DDB
 
     APIGW --> QRY[Lambda: query]
     QRY -->|embed question| GEM2[Gemini embeddings]
@@ -51,7 +56,9 @@ flowchart LR
     DOCS -->|list corpus| DDB
 
     ING -.failed events.-> DLQ[(SQS dead-letter queue)]
-    ING & QRY & UPL & DOCS -.logs / metrics.-> CW[CloudWatch]
+    ING & QRY & UPL & DOCS & REC -.logs / metrics.-> CW[CloudWatch alarms]
+    DLQ -.depth.-> CW
+    CW -.alarm.-> SNS[SNS] -.-> EMAIL[Email]
 ```
 
 There's no vector database. The table stores the vectors as JSON and the Lambda
@@ -125,16 +132,32 @@ count, no LLM call) - the demo page's "Knowledge base" panel is just that
 endpoint rendered, so visitors see what's actually answerable before they ask
 anything, and it refreshes itself after an upload is accepted.
 
+The demo page doesn't hardcode the API URL. The CDK deploy writes a
+`config.js` next to it with the API's real endpoint (`s3deploy.Source.data`
+with the endpoint as a deploy-time token), so the deploy that creates the API
+is also the thing that tells the page where it is.
+
 ## Reliability
 
 - Retry with backoff on every Gemini call, but only for transient failures
-  (429/5xx/timeout) - a bad request fails fast instead of retrying a bug 3 times
+  (429/5xx/timeout) - a bad request fails fast instead of retrying a bug 3 times.
+  When a 429 says how long to wait (`Retry-After`, or the `retryDelay` in
+  Gemini's error body), the retry waits that long instead of guessing, capped
+  at 20 s so it can't sleep past the Lambda timeout
+- Ingest embeds a document's chunks in batches (`batchEmbedContents`, up to
+  100 per call) instead of one HTTP call per chunk
 - If Gemini's answer call keeps failing, the query Lambda falls back to Groq;
   the response says which provider actually answered
 - SQS dead-letter queue on the ingest Lambda, so a document that fails to
   ingest is visible and replayable instead of silently vanishing
+- Deleting a file from S3 deletes its chunks (`ObjectRemoved` event), so the
+  API can't keep citing a document that's gone. A daily reconcile job compares
+  bucket keys against the table and removes anything orphaned, for deletes
+  that never produced an event (e.g. S3 Lifecycle expiry)
 - Every request logs one JSON line (latency, success, provider) to CloudWatch;
-  three alarms watch ingest errors, query errors, and DLQ depth
+  three alarms watch ingest errors, query errors, and DLQ depth, and email
+  through SNS when they fire (the address is deploy-time config, not in the
+  repo)
 
 Deploying this for real (rather than just `cdk synth` passing) surfaced a
 string of real bugs none of which show up in a mocked unit test: a reserved
@@ -183,6 +206,19 @@ The one remaining miss is a genuine limitation of keyword matching, not a
 bug: a correct answer paraphrased using different words than my expected
 keyword. Full history in `INTERVIEW_NOTES.md`.
 
+**Bigger eval, not yet recorded.** The question set is now 19 (14 in-corpus,
+5 out-of-scope), and the script can grade each answer with an LLM judge
+(`--judge`) against a reference answer, alongside the keyword check, and
+repeat the whole set (`--runs N`) to report a range instead of one sample.
+The numbers above are still from the earlier 11-question run - the new set
+hasn't produced a valid run yet, and I'd rather leave the old numbers up than
+post unreliable ones. The first attempt used Gemini as the judge, which
+burned the free tier's 20 generate requests per day - the same quota the
+live API answers from - so only 2 of 14 answers in the second run got
+graded. That result was discarded, and the judge now runs on Groq. It also
+surfaced a real limit: the live demo answers from Gemini for about 20
+questions a day, then everything comes from the Groq fallback.
+
 ## IAM
 
 The deploying IAM user (`shikha-dev`) had `AdministratorAccess` while the
@@ -211,7 +247,27 @@ working exactly as intended, if inconvenient mid-incident.
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/tests.yml`) runs the 24 unit tests on every
+```mermaid
+flowchart LR
+    DEV[Feature branch] -->|open PR| PR[Pull request]
+    PR --> T1[pytest\n45 offline tests]
+    T1 -->|fail| BLOCK[Merge blocked]
+    BLOCK -->|fix + push| PR
+    T1 -->|pass| MERGE[Merge to main]
+    MERGE --> T2[pytest again\non the merged commit]
+    T2 -->|pass| OIDC[GitHub OIDC token]
+    OIDC -->|AssumeRoleWithWebIdentity| ROLE[docqa-github-deploy role]
+    ROLE -->|assume CDK bootstrap roles| CDK[cdk deploy]
+    CDK --> AWS[(AWS: CloudFormation stack)]
+```
+
+`main` is branch-protected: no direct pushes, every change comes through a
+pull request that has to pass the `pytest` check against an up-to-date
+branch, and the rule applies to admins too. No approvals are required - it's
+a one-person repo and GitHub doesn't let you approve your own PR - so the
+test check is the gate.
+
+GitHub Actions (`.github/workflows/tests.yml`) runs the 45 unit tests on every
 push and pull request - no AWS credentials involved, since nothing in them
 makes a real call. On a push to `main`, after the tests pass, a second job
 runs `cdk deploy` using **GitHub OIDC**: GitHub hands the job a short-lived
@@ -248,12 +304,14 @@ aws ssm put-parameter --name /docqa/gemini-api-key --type SecureString \
 aws ssm put-parameter --name /docqa/groq-api-key --type SecureString \
   --value "YOUR_GROQ_KEY" --region us-east-2
 
-cdk deploy InfrastructureStack --require-approval never
+# alarmEmail is optional - leave it off and the alarms exist with no email
+cdk deploy InfrastructureStack --require-approval never -c alarmEmail=you@example.com
 
 cd ..
 python scripts/upload_document.py corpus/lambda-limits.md
 python scripts/ask.py "What is the maximum Lambda timeout?"
-python scripts/eval.py
+python scripts/eval.py                     # keyword-graded, one run
+python scripts/eval.py --judge --runs 2    # LLM-judged, repeated
 
 # or hit the upload API directly, like the demo page does
 curl -X POST "$(aws cloudformation describe-stacks --stack-name InfrastructureStack \
@@ -273,3 +331,7 @@ curl -X POST "$(aws cloudformation describe-stacks --stack-name InfrastructureSt
       live knowledge-base panel, per-route throttling
 - [x] CI - unit tests on every push and PR (GitHub Actions)
 - [x] CD - deploy on merge via GitHub OIDC (first successful run 2026-09-23)
+- [x] Hardening - S3-delete cleanup + daily reconcile job, SNS alarm emails,
+      branch protection on `main`, deploy-time API URL for the demo, batched
+      embeddings + server retry hints, 19-question LLM-judged eval
+- [ ] Record a valid run of the 19-question eval
