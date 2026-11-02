@@ -26,39 +26,46 @@ citations, and a small eval harness run against it (see below).
 
 ## Architecture
 
+Three small diagrams, one per path through the system.
+
+**1. Adding and removing documents**
+
 ```mermaid
-flowchart LR
-    DEMO[Demo page\nS3 + CloudFront] -->|POST /upload| APIGW[API Gateway]
-    DEMO -->|POST /query| APIGW
-    DEMO -->|GET /documents| APIGW
-
-    APIGW --> UPL[Lambda: upload]
+flowchart TD
+    DEMO[Demo page] -->|POST /upload| UPL[Lambda: upload]
     UPL -->|is this about AWS?| GEM0[Gemini]
-    UPL -->|accepted| S3[(S3 bucket)]
+    UPL -->|accepted| S3[(S3 documents bucket)]
+    CLI[CLI script] -->|upload| S3
+    S3 -->|file added| ING[Lambda: ingest]
+    S3 -->|file deleted| ING
+    ING -->|embed chunks in batches| GEM1[Gemini embeddings]
+    ING -->|write or delete chunks| DDB[(DynamoDB chunks table)]
+    SCHED[EventBridge, once a day] --> REC[Lambda: reconcile]
+    REC -->|compare keys vs chunks,<br/>delete orphans| DDB
+```
 
-    CLI[CLI: upload_document.py] -->|upload doc| S3
-    S3 -->|ObjectCreated| ING[Lambda: ingest]
-    S3 -->|ObjectRemoved| ING
-    ING -->|batch-embed chunks| GEM1[Gemini embeddings]
-    ING -->|write / delete chunks| DDB[(DynamoDB ChunksTable)]
+**2. Asking a question**
 
-    SCHED[EventBridge\ndaily] --> REC[Lambda: reconcile]
-    REC -->|list keys| S3
-    REC -->|delete orphaned chunks| DDB
+```mermaid
+flowchart TD
+    DEMO[Demo page] -->|POST /query| QRY[Lambda: query]
+    QRY -->|1. embed the question| GEM[Gemini embeddings]
+    QRY -->|2. scan + cosine rank| DDB[(DynamoDB chunks table)]
+    QRY -->|3. answer from top chunks| LLM[Gemini<br/>falls back to Groq]
+    QRY -->|4. answer + citations| DEMO
+    DEMO -->|GET /documents| DOCS[Lambda: documents]
+    DOCS -->|list what's indexed| DDB
+```
 
-    APIGW --> QRY[Lambda: query]
-    QRY -->|embed question| GEM2[Gemini embeddings]
-    QRY -->|scan + cosine rank| DDB
-    QRY -->|answer with context| LLM[Gemini, falls back to Groq]
-    QRY -->|answer + citations| DEMO
+**3. When something fails**
 
-    APIGW --> DOCS[Lambda: documents]
-    DOCS -->|list corpus| DDB
-
-    ING -.failed events.-> DLQ[(SQS dead-letter queue)]
-    ING & QRY & UPL & DOCS & REC -.logs / metrics.-> CW[CloudWatch alarms]
-    DLQ -.depth.-> CW
-    CW -.alarm.-> SNS[SNS] -.-> EMAIL[Email]
+```mermaid
+flowchart TD
+    ING[Lambda: ingest] -->|fails after retries| DLQ[(SQS dead-letter queue)]
+    LAMBDAS[All Lambdas] -->|JSON logs + error metrics| CW[CloudWatch alarms]
+    DLQ -->|message count| CW
+    CW -->|alarm fires| SNS[SNS topic]
+    SNS --> EMAIL[Email]
 ```
 
 There's no vector database. The table stores the vectors as JSON and the Lambda
@@ -248,17 +255,17 @@ working exactly as intended, if inconvenient mid-incident.
 ## CI/CD
 
 ```mermaid
-flowchart LR
+flowchart TD
     DEV[Feature branch] -->|open PR| PR[Pull request]
-    PR --> T1[pytest\n45 offline tests]
-    T1 -->|fail| BLOCK[Merge blocked]
-    BLOCK -->|fix + push| PR
+    PR --> T1[pytest: 45 offline tests]
+    T1 -->|fail| BLOCK[Merge blocked:<br/>fix and push again]
+    BLOCK --> PR
     T1 -->|pass| MERGE[Merge to main]
-    MERGE --> T2[pytest again\non the merged commit]
-    T2 -->|pass| OIDC[GitHub OIDC token]
-    OIDC -->|AssumeRoleWithWebIdentity| ROLE[docqa-github-deploy role]
-    ROLE -->|assume CDK bootstrap roles| CDK[cdk deploy]
-    CDK --> AWS[(AWS: CloudFormation stack)]
+    MERGE --> T2[pytest again on main]
+    T2 -->|pass| OIDC[GitHub OIDC token,<br/>no stored AWS keys]
+    OIDC --> ROLE[Assume deploy role in AWS]
+    ROLE --> CDK[cdk deploy]
+    CDK --> AWS[(Live AWS stack)]
 ```
 
 `main` is branch-protected: no direct pushes, every change comes through a
