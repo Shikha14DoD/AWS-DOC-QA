@@ -1,13 +1,19 @@
 """tiny retry-with-backoff helper, no deps"""
 
+import os
 import random
 import time
 import urllib.error
 
-# Capped: a server-supplied hint can be minutes (free-tier rate limits have
-# said this), and a Lambda has a hard timeout - sleeping past it just burns
-# the invocation instead of letting it fail and retry fresh.
+# Default ceiling on how long we'll wait because a server asked us to. Sized
+# for ingest (5 min timeout). API-facing Lambdas set MAX_RETRY_DELAY much
+# lower: the query Lambda has 30 s total, and a 20 s sleep there ran it into
+# its timeout before it could fall back to Groq (live 503s, 2026-11-02).
 MAX_RETRY_DELAY = 20.0
+
+
+def max_retry_delay() -> float:
+    return float(os.environ.get("MAX_RETRY_DELAY", MAX_RETRY_DELAY))
 
 
 def is_transient(exc: Exception) -> bool:
@@ -33,7 +39,12 @@ def call_with_retry(fn, *args, retries=3, base_delay=0.5, **kwargs):
 
     Honors a server-supplied retry hint (Retry-After / RetryInfo) when one is
     attached to the exception; falls back to exponential backoff otherwise.
+    If the server wants a longer wait than this Lambda can afford, re-raise
+    immediately instead of sleeping: retrying sooner than asked just gets
+    another 429, and failing fast lets the caller's fallback (Groq, or the
+    async retry + DLQ) take over while there's still time.
     """
+    max_delay = max_retry_delay()
     attempt = 0
     while True:
         try:
@@ -44,7 +55,9 @@ def call_with_retry(fn, *args, retries=3, base_delay=0.5, **kwargs):
                 raise
             hint = retry_delay_hint(exc)
             if hint is not None:
-                delay = min(hint, MAX_RETRY_DELAY) + random.uniform(0, 0.25)
+                if hint > max_delay:
+                    raise
+                delay = hint + random.uniform(0, 0.25)
             else:
                 delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
             time.sleep(delay)

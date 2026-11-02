@@ -31,6 +31,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -99,8 +100,15 @@ def ask(base_url: str, question: str) -> dict:
         method="POST",
     )
     started = time.time()
-    with urllib.request.urlopen(req, timeout=35) as resp:
-        body = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=35) as resp:
+            body = json.loads(resp.read())
+    except (urllib.error.URLError, TimeoutError) as exc:
+        # A failed request is a result, not a reason to abort the run: the
+        # first 19-question run died on one 503 and recorded nothing.
+        # Recorded as an error row that counts against the system.
+        reason = f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else str(exc)
+        body = {"_error": reason}
     body["_latency_ms"] = round((time.time() - started) * 1000)
     return body
 
@@ -155,7 +163,23 @@ def run_once(questions: list[dict], base_url: str, use_judge: bool) -> list[dict
             "answer": answer,
             "provider": result.get("provider"),
             "latency_ms": result["_latency_ms"],
+            "error": result.get("_error"),
         }
+
+        if row["error"]:
+            # The user got no answer: for an in-corpus question that's a miss
+            # on every count (False, not None - None means "not graded").
+            # For out-of-scope it's neither a correct decline nor a
+            # hallucination, so it's reported on its own line.
+            if q["type"] == "in_corpus":
+                row["retrieval_hit"] = row["answer_correct"] = False
+                if use_judge:
+                    row["judge_correct"] = False
+            else:
+                row["hallucinated"] = False
+            rows.append(row)
+            print(f"[{q['type']:11}] {q['question'][:60]:60} -> ERROR ({row['error']})")
+            continue
 
         if q["type"] == "in_corpus":
             row["retrieval_hit"] = q["expected_source"] in sources_hit
@@ -186,22 +210,30 @@ def summarize(rows: list[dict], use_judge: bool) -> dict:
     # drop it from the denominator instead of silently scoring it as a miss.
     graded = [r for r in in_corpus if r.get(correctness_key) is not None]
 
+    oos_answered = [r for r in out_of_scope if not r["error"]]
     return {
         "retrieval_hit_rate": sum(r["retrieval_hit"] for r in in_corpus) / len(in_corpus),
+        "retrieval_hits": sum(r["retrieval_hit"] for r in in_corpus),
         "answer_accuracy": (sum(r[correctness_key] for r in graded) / len(graded)) if graded else 0.0,
+        "answer_correct": sum(r[correctness_key] for r in graded),
         "answer_accuracy_n": len(graded),
         "hallucination_rate": sum(r["hallucinated"] for r in out_of_scope) / len(out_of_scope),
+        "hallucinated": sum(r["hallucinated"] for r in out_of_scope),
+        "declined": sum(not r["hallucinated"] for r in oos_answered),
+        "api_errors": sum(bool(r["error"]) for r in rows),
         "avg_latency_ms": sum(r["latency_ms"] for r in rows) / len(rows),
         "in_corpus_n": len(in_corpus),
         "out_of_scope_n": len(out_of_scope),
+        "total_n": len(rows),
     }
 
 
 def format_summary(m: dict) -> str:
     return (
-        f"retrieval hit rate:  {m['retrieval_hit_rate']:.0%}\n"
-        f"answer accuracy:     {m['answer_accuracy']:.0%}  (of {m['answer_accuracy_n']}/{m['in_corpus_n']} graded)\n"
-        f"hallucination rate:  {m['hallucination_rate']:.0%}\n"
+        f"retrieval hit rate:  {m['retrieval_hit_rate']:.0%}  ({m['retrieval_hits']}/{m['in_corpus_n']})\n"
+        f"answer accuracy:     {m['answer_accuracy']:.0%}  ({m['answer_correct']}/{m['answer_accuracy_n']} graded, of {m['in_corpus_n']})\n"
+        f"out-of-scope:        {m['declined']}/{m['out_of_scope_n']} declined, {m['hallucinated']} hallucinated\n"
+        f"api errors:          {m['api_errors']}/{m['total_n']} requests failed (counted as misses)\n"
         f"avg latency:         {m['avg_latency_ms']:.0f} ms"
     )
 
@@ -264,7 +296,9 @@ def _write_report(rows: list[dict], run_metrics: list[dict], use_judge: bool) ->
         "|---|---|---|---|---|",
     ]
     for r in rows:
-        if r["type"] == "in_corpus":
+        if r["error"]:
+            result = f"API error ({r['error']})"
+        elif r["type"] == "in_corpus":
             correct = r.get("judge_correct") if use_judge else r.get("answer_correct")
             if correct is None:
                 result = "judge call failed"
