@@ -59,6 +59,10 @@ STACK_NAME = "InfrastructureStack"
 REGION = "us-east-2"
 QUESTIONS_PATH = Path(__file__).resolve().parents[1] / "eval" / "questions.json"
 RESULTS_PATH = Path(__file__).resolve().parents[1] / "eval" / "results.md"
+# Full answers + every verdict, so the judge can be spot-checked by hand:
+# fill in "human_correct" (true/false) on the in-corpus rows, then run
+# `python scripts/eval.py --agreement` to see how often the judge agreed.
+ANSWERS_PATH = Path(__file__).resolve().parents[1] / "eval" / "answers.json"
 
 # The judge runs on Groq, not Gemini. First version used Gemini and burned the
 # free tier's 20 generate requests/day in under one run - the same daily quota
@@ -160,6 +164,7 @@ def run_once(questions: list[dict], base_url: str, use_judge: bool) -> list[dict
         row = {
             "question": q["question"],
             "type": q["type"],
+            "expected_answer": q.get("expected_answer"),
             "answer": answer,
             "provider": result.get("provider"),
             "latency_ms": result["_latency_ms"],
@@ -260,7 +265,50 @@ def run(num_runs: int, use_judge: bool) -> None:
             print(f"{key:20} min {min(values):.0%}  avg {sum(values) / len(values):.0%}  max {max(values):.0%}")
 
     _write_report(last_rows, run_metrics, use_judge)
+    _write_answers(last_rows)
+    print(f"answers + verdicts written to {ANSWERS_PATH}")
     print(f"\nfull report written to {RESULTS_PATH}")
+
+
+def _write_answers(rows: list[dict]) -> None:
+    records = []
+    for r in rows:
+        rec = {k: r.get(k) for k in (
+            "question", "type", "expected_answer", "answer", "provider", "error",
+            "retrieval_hit", "answer_correct", "judge_correct", "hallucinated",
+        )}
+        rec["keyword_correct"] = rec.pop("answer_correct")
+        if r["type"] == "in_corpus" and not r["error"]:
+            rec["human_correct"] = None  # to be filled in by hand
+        records.append(rec)
+    ANSWERS_PATH.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def judge_agreement(records: list[dict]) -> dict:
+    """How often the LLM judge matched a human's verdict, on hand-graded rows."""
+    graded = [
+        r for r in records
+        if r.get("human_correct") is not None and r.get("judge_correct") is not None
+    ]
+    agreed = [r for r in graded if r["human_correct"] == r["judge_correct"]]
+    return {
+        "graded": len(graded),
+        "agreed": len(agreed),
+        "disagreements": [r["question"] for r in graded if r not in agreed],
+    }
+
+
+def report_agreement() -> None:
+    if not ANSWERS_PATH.exists():
+        raise SystemExit(f"{ANSWERS_PATH} doesn't exist yet - run `python scripts/eval.py --judge` first")
+    records = json.loads(ANSWERS_PATH.read_text(encoding="utf-8"))
+    result = judge_agreement(records)
+    if not result["graded"]:
+        print(f'no hand-graded rows yet - set "human_correct" in {ANSWERS_PATH}')
+        return
+    print(f"judge agreed with the human on {result['agreed']}/{result['graded']} rows")
+    for q in result["disagreements"]:
+        print(f"  disagreed: {q}")
 
 
 def _write_report(rows: list[dict], run_metrics: list[dict], use_judge: bool) -> None:
@@ -321,5 +369,12 @@ if __name__ == "__main__":
         "--judge", action="store_true",
         help="also grade each in-corpus answer with an LLM judge against expected_answer",
     )
+    parser.add_argument(
+        "--agreement", action="store_true",
+        help="don't call the API; compare hand-graded human_correct in answers.json to the judge",
+    )
     args = parser.parse_args()
-    run(args.runs, args.judge)
+    if args.agreement:
+        report_agreement()
+    else:
+        run(args.runs, args.judge)
