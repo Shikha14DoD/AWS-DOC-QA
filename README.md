@@ -1,14 +1,51 @@
 # AWS Document Q&A
 
+### ▶ [Try the live demo](https://dsocz579or6gq.cloudfront.net)
+
+Ask it a question about AWS and get an answer with citations to the exact
+passages it used. You can upload your own document too (AWS-related only, and
+it checks).
+
 [![tests](https://github.com/Shikha14DoD/AWS-DOC-QA/actions/workflows/tests.yml/badge.svg)](https://github.com/Shikha14DoD/AWS-DOC-QA/actions/workflows/tests.yml)
 
-**[Live demo](https://dsocz579or6gq.cloudfront.net)**
-\- ask it a question, get a real answer from the deployed API with citations.
-Shows a live "knowledge base" panel of exactly which documents are
-answerable, and you can upload your own (AWS-related content only - it's
-checked). S3 + CloudFront (no third-party host, no backend of its own beyond
-the API below) - the bucket is private, CloudFront reads it via Origin Access
-Control, and CloudFront's own domain serves HTTPS at no extra cost.
+## Why this exists
+
+Nobody assigned this. I wanted a real AWS project I could point at, not a
+tutorial clone, so I built one, deployed it, and kept running it. It has been
+live since September 2026. The people using it are me and a handful of people
+I shared the link with.
+
+The fun part has been that it keeps breaking in ways no tutorial warned me
+about:
+
+- **My own 62-page VPC training PDF silently lost its last 12 pages.**
+  Ingest caps PDFs at 50 pages and said nothing about it. Now the upload
+  response tells you exactly how many pages got indexed.
+- **That same PDF tripped Gemini's rate limit.** I first misread it as a
+  daily quota. It was per-minute, and the error message was telling me how
+  long to wait the whole time. Now the retry reads that hint, and chunks are
+  embedded in batches instead of 106 separate calls.
+- **The demo link said "Not secure".** It was plain HTTP from S3, so I moved
+  it behind CloudFront with HTTPS. Then someone I'd shared it with *still* got
+  a browser warning. The certificate was fine (I checked it); random
+  `*.cloudfront.net` addresses just look suspicious to security filters.
+- **Deleting a document didn't delete it.** Its chunks stayed searchable, so
+  the API could cite a file that no longer existed. Now a delete event cleans
+  them up, and a daily job catches anything the event missed.
+- **My own eval starved the demo.** The LLM judge I added used the same
+  20-requests-a-day Gemini quota that answers real questions, and burned it
+  in one run. I threw the results away and moved the judge to a different
+  provider.
+- **Things outside my code broke it too.** Google retired two models I was
+  calling, Groq's Cloudflare blocked Python's default user-agent, and the
+  first automated deploy failed with "not authorized" until I printed the
+  login token's claims and found GitHub had changed its format.
+
+Each one is fixed (or, for the browser warning, understood), covered by the
+45 offline tests that run on every pull request where code was involved, and
+written up below.
+
+## What it is
 
 A small serverless RAG API on AWS. You upload documents, then ask questions about
 them and get back an answer with citations to the chunks it used. The corpus
@@ -16,10 +53,11 @@ them and get back an answer with citations to the chunks it used. The corpus
 quotas, DynamoDB basics, S3 storage classes - paraphrased from AWS's own docs
 with the source URL on each file, not invented facts.
 
-I built this mostly to have a real AWS project to point at - Lambda, DynamoDB,
-S3, API Gateway, all defined with CDK. The part I care about is the reliability
-stuff (retries, LLM fallback, a dead-letter queue for failed ingests), not the
-RAG pattern itself.
+Lambda, DynamoDB, S3, API Gateway, SQS, CloudWatch, EventBridge, all defined
+with CDK. The demo page is hosted on AWS too (private S3 bucket behind
+CloudFront, via Origin Access Control). The part I care about is the
+reliability stuff (retries, LLM fallback, a dead-letter queue, cleanup jobs,
+alerts), not the RAG pattern itself.
 
 **Status:** deployed and working. Live API, real ingestion, real answers with
 citations, and a small eval harness run against it (see below).
