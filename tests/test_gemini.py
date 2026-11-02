@@ -65,6 +65,61 @@ def test_embed_batch_splits_into_groups_past_the_api_cap(monkeypatch):
     assert len(vectors) == 5
 
 
+class _FakeClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def test_embed_batch_paces_to_the_per_minute_quota(monkeypatch):
+    # The 2026-11-02 failure: 106 texts sent as 100 + 6 in the same second
+    # broke the 100/minute free-tier limit on every attempt. Now: 90, wait
+    # for a fresh minute, then the remaining 16.
+    clock = _FakeClock()
+    monkeypatch.setattr(gemini.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(gemini.time, "sleep", clock.sleep)
+    monkeypatch.setattr(gemini, "EMBED_TEXTS_PER_MINUTE", 90)
+    sizes = []
+
+    def fake_post(model, method, payload, timeout):
+        n = len(payload["requests"])
+        sizes.append(n)
+        clock.now += 2.0  # each call takes a couple of seconds
+        return {"embeddings": [{"values": [1.0]} for _ in range(n)]}
+
+    monkeypatch.setattr(gemini, "_post", fake_post)
+
+    vectors = gemini.embed_batch([f"chunk {i}" for i in range(106)])
+
+    assert sizes == [90, 16]
+    assert clock.sleeps == [58.0]  # the rest of the first minute, not a fixed 60
+    assert len(vectors) == 106
+
+
+def test_embed_batch_under_the_quota_never_waits(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(gemini.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(gemini.time, "sleep", clock.sleep)
+    monkeypatch.setattr(gemini, "EMBED_TEXTS_PER_MINUTE", 90)
+    monkeypatch.setattr(
+        gemini, "_post",
+        lambda model, method, payload, timeout: {
+            "embeddings": [{"values": [1.0]} for _ in payload["requests"]]
+        },
+    )
+
+    gemini.embed_batch(["a"] * 12)
+
+    assert clock.sleeps == []
+
+
 def test_embed_batch_on_empty_input_makes_no_calls(monkeypatch):
     calls = []
     monkeypatch.setattr(gemini, "_post", lambda *a, **kw: calls.append(1))

@@ -11,6 +11,7 @@ and cached for the life of the execution environment.
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -96,6 +97,13 @@ def embed(text: str, model: str | None = None, timeout: int = 20) -> list[float]
 # the API accepts in one call.
 MAX_BATCH_SIZE = 100
 
+# The free tier allows 100 embeddings per minute, and every text in a batch
+# counts as one (measured 2026-11-02: a 106-chunk PDF sent as 100 + 6 in the
+# same second got a 429 on every attempt and landed in the DLQ). 90 leaves
+# room for the query Lambda's one-embedding-per-question in the same minute.
+EMBED_TEXTS_PER_MINUTE = int(os.environ.get("EMBED_TEXTS_PER_MINUTE", "90"))
+_WINDOW_SECONDS = 60.0
+
 
 def embed_batch(
     texts: list[str], model: str | None = None, timeout: int = 60
@@ -108,11 +116,26 @@ def embed_batch(
     anyway. batchEmbedContents takes up to MAX_BATCH_SIZE at once; texts
     beyond that are split into further batches, each still one HTTP call.
     Order of the returned vectors matches the order of `texts`.
+
+    Batching cuts HTTP calls, not quota: each text still counts against the
+    per-minute limit. So no more than EMBED_TEXTS_PER_MINUTE texts go out per
+    minute, and the next batch waits for a fresh minute. A 106-chunk document
+    takes about a minute longer, instead of failing every attempt.
     """
     model = model or os.environ.get("EMBED_MODEL", "gemini-embedding-001")
+    group_size = max(1, min(MAX_BATCH_SIZE, EMBED_TEXTS_PER_MINUTE))
     vectors: list[list[float]] = []
-    for i in range(0, len(texts), MAX_BATCH_SIZE):
-        group = texts[i : i + MAX_BATCH_SIZE]
+    window_start = time.monotonic()
+    sent_in_window = 0
+    for i in range(0, len(texts), group_size):
+        group = texts[i : i + group_size]
+        if sent_in_window + len(group) > EMBED_TEXTS_PER_MINUTE:
+            wait = _WINDOW_SECONDS - (time.monotonic() - window_start)
+            if wait > 0:
+                time.sleep(wait)
+            window_start = time.monotonic()
+            sent_in_window = 0
+        sent_in_window += len(group)
         body = _post(
             model,
             "batchEmbedContents",
