@@ -165,6 +165,9 @@ class InfrastructureStack(Stack):
                 **common_env,
                 "CHAT_MODEL": "gemini-3.6-flash",
                 "TOP_K": "5",
+                # API-facing, 30 s timeout: never sleep long on a 429, fall
+                # back to Groq instead (see retry.py).
+                "MAX_RETRY_DELAY": "2",
                 "GROQ_API_KEY_PARAM": GROQ_API_KEY_PARAM,
                 "GROQ_CHAT_MODEL": "openai/gpt-oss-20b",
             },
@@ -249,6 +252,7 @@ class InfrastructureStack(Stack):
                 "GROQ_CHAT_MODEL": "openai/gpt-oss-20b",
                 "MAX_UPLOAD_PDF_BYTES": "2000000",
                 "MAX_UPLOAD_BYTES": "20000",
+                "MAX_RETRY_DELAY": "2",
             },
         )
         self.documents_bucket.grant_write(self.upload_fn)
