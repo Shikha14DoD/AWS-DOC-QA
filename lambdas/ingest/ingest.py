@@ -26,9 +26,10 @@ import time
 import urllib.parse
 
 import boto3
-from boto3.dynamodb.conditions import Key
 
 from doc_qa_common import gemini, pdf_extract
+from doc_qa_common.chunks_table import delete_chunks as _delete_chunks
+from doc_qa_common.document_id import document_id_from_key as _document_id_from_key
 
 TABLE_NAME = os.environ["CHUNKS_TABLE_NAME"]
 
@@ -43,12 +44,6 @@ SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS + PDF_EXTENSIONS
 
 _s3 = boto3.client("s3")
 _table = boto3.resource("dynamodb").Table(TABLE_NAME)
-
-
-def _document_id_from_key(key: str) -> str:
-    """Turn an S3 key into a stable, readable document id."""
-    stem = re.sub(r"\.[^.]+$", "", key)
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("_") or "document"
 
 
 def chunk_text(text: str) -> list[dict]:
@@ -143,44 +138,22 @@ def _process_object(bucket: str, key: str) -> int:
     return len(chunks)
 
 
-def _existing_chunk_keys(document_id: str) -> list[dict]:
-    """All {document_id, chunk_id} keys currently stored for a document."""
-    keys: list[dict] = []
-    kwargs = {
-        "KeyConditionExpression": Key("document_id").eq(document_id),
-        "ProjectionExpression": "document_id, chunk_id",
-    }
-    while True:
-        resp = _table.query(**kwargs)
-        keys.extend({"document_id": i["document_id"], "chunk_id": i["chunk_id"]}
-                    for i in resp.get("Items", []))
-        if "LastEvaluatedKey" not in resp:
-            break
-        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
-    return keys
-
-
 def _delete_document(key: str) -> int:
     """Remove every chunk for the document an S3 key maps to.
 
-    Chunk ids are deterministic (0000, 0001, ...) from the ingest side, but
-    deletion doesn't need to know how many there were - it queries the table
-    for whatever's actually there and removes exactly that, so it's correct
-    even if a prior ingest only partially completed.
+    Delegates the actual query-then-delete to doc_qa_common.chunks_table,
+    shared with the reconcile Lambda - see that module's docstring.
     """
     started = time.time()
     document_id = _document_id_from_key(key)
     try:
-        keys = _existing_chunk_keys(document_id)
-        with _table.batch_writer() as batch:
-            for k in keys:
-                batch.delete_item(Key=k)
+        deleted = _delete_chunks(_table, document_id)
     except Exception as exc:
         log_delete(key, 0, started, ok=False, error=str(exc))
         raise
 
-    log_delete(key, len(keys), started, ok=True)
-    return len(keys)
+    log_delete(key, deleted, started, ok=True)
+    return deleted
 
 
 def log_ingest(key, chunk_count, started, ok, skipped=False, error=None, **extra):

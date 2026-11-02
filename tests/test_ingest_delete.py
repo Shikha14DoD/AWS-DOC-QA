@@ -11,7 +11,6 @@ No AWS or network access: `ingest._table` is monkeypatched with fakes.
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 os.environ.setdefault("CHUNKS_TABLE_NAME", "test-table")
 os.environ.setdefault("GEMINI_API_KEY_PARAM", "/test/key")
@@ -23,23 +22,6 @@ sys.path.insert(0, str(ROOT / "lambdas" / "ingest"))
 import ingest  # noqa: E402
 
 
-class _FakeBatchWriter:
-    """Mimics boto3's `table.batch_writer()` context manager just enough to
-    record what gets deleted, without a real DynamoDB table behind it."""
-
-    def __init__(self):
-        self.deleted = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def delete_item(self, Key):
-        self.deleted.append(Key)
-
-
 def _s3_record(key, event_name):
     return {
         "eventName": event_name,
@@ -47,59 +29,31 @@ def _s3_record(key, event_name):
     }
 
 
-def test_existing_chunk_keys_paginates(monkeypatch):
-    pages = [
-        {
-            "Items": [{"document_id": "doc", "chunk_id": "0000"}],
-            "LastEvaluatedKey": {"document_id": "doc", "chunk_id": "0000"},
-        },
-        {"Items": [{"document_id": "doc", "chunk_id": "0001"}]},
-    ]
-    query = MagicMock(side_effect=pages)
-    monkeypatch.setattr(ingest._table, "query", query)
+def test_delete_document_derives_the_right_document_id(monkeypatch):
+    seen = {}
 
-    keys = ingest._existing_chunk_keys("doc")
+    def fake_delete_chunks(table, document_id):
+        seen["document_id"] = document_id
+        return 3
 
-    assert keys == [
-        {"document_id": "doc", "chunk_id": "0000"},
-        {"document_id": "doc", "chunk_id": "0001"},
-    ]
-    assert query.call_count == 2
-    assert "ExclusiveStartKey" in query.call_args_list[1].kwargs
+    monkeypatch.setattr(ingest, "_delete_chunks", fake_delete_chunks)
 
-
-def test_delete_document_removes_every_chunk(monkeypatch):
-    monkeypatch.setattr(
-        ingest, "_existing_chunk_keys",
-        lambda doc_id: [{"document_id": doc_id, "chunk_id": f"{i:04d}"} for i in range(3)],
-    )
-    writer = _FakeBatchWriter()
-    monkeypatch.setattr(ingest._table, "batch_writer", lambda: writer)
-
-    deleted = ingest._delete_document("notes.md")
+    deleted = ingest._delete_document("my notes!!.pdf")
 
     assert deleted == 3
-    assert writer.deleted == [
-        {"document_id": "notes", "chunk_id": "0000"},
-        {"document_id": "notes", "chunk_id": "0001"},
-        {"document_id": "notes", "chunk_id": "0002"},
-    ]
+    assert seen["document_id"] == "my_notes"  # same sanitize rule as ingest's own keys
 
 
 def test_delete_document_with_nothing_to_delete_is_a_noop(monkeypatch):
-    monkeypatch.setattr(ingest, "_existing_chunk_keys", lambda doc_id: [])
-    writer = _FakeBatchWriter()
-    monkeypatch.setattr(ingest._table, "batch_writer", lambda: writer)
-
+    monkeypatch.setattr(ingest, "_delete_chunks", lambda table, document_id: 0)
     assert ingest._delete_document("already-gone.md") == 0
-    assert writer.deleted == []
 
 
 def test_delete_document_raises_and_logs_on_failure(monkeypatch):
-    def boom(doc_id):
+    def boom(table, document_id):
         raise RuntimeError("table unavailable")
 
-    monkeypatch.setattr(ingest, "_existing_chunk_keys", boom)
+    monkeypatch.setattr(ingest, "_delete_chunks", boom)
 
     try:
         ingest._delete_document("notes.md")
