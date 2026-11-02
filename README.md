@@ -23,8 +23,9 @@ make one up.** Ask it "What is the capital of France?" and the live API
 replies, word for word, `I don't know.` A confident wrong answer is worse
 than no answer when you're looking up a limit you're about to design around.
 The model is instructed to answer only from the retrieved passages, and the
-eval checks that it holds: all 3 out-of-scope questions were declined in the
-recorded run.
+eval checks that it holds: across both recorded eval runs, every
+out-of-scope question that got a response was declined, and none was
+answered with a made-up fact.
 
 So I built it, deployed it, and kept running it. It has been live since
 September 2026. The people using it are me and a handful of people I shared
@@ -57,7 +58,7 @@ about:
   login token's claims and found GitHub had changed its format.
 
 Each one is fixed (or, for the browser warning, understood), covered by the
-45 offline tests that run on every pull request where code was involved, and
+46 offline tests that run on every pull request where code was involved, and
 written up below.
 
 ## What it is
@@ -236,20 +237,45 @@ Details in `INTERVIEW_NOTES.md` (local, not committed).
 
 `scripts/eval.py` runs a fixed set of questions against the live deployed API
 (not a mock) and checks three things: did retrieval pull a chunk from the
-right source document, does the answer contain the expected fact, and for
-questions the corpus can't answer at all, does the model decline instead of
-making something up.
+right source document, is the answer correct (keyword match, or an LLM judge
+comparing it to a reference answer with `--judge`), and for questions the
+corpus can't answer at all, does the model decline instead of making
+something up. A request that fails counts as a miss.
+
+**Latest run (2026-11-02, 19 questions, LLM-judged, single run, recorded
+as-is):**
 
 ```
-retrieval hit rate:  100%  (8/8)
-answer accuracy:     88%  (7/8)
-hallucination rate:  0%  (0/3)
+retrieval hit rate:  71%  (10/14)
+answer accuracy:     71%  (10/14)
+out-of-scope:        3/5 declined, 0 hallucinated
+api errors:          6/19 requests failed (counted as misses)
 ```
 
-(Latest run is against the current 118-chunk corpus: the three docs plus a real
-62-page VPC PDF. The numbers didn't move when the corpus grew 10x.)
+What that actually says:
 
-Retrieval has been 100% across every run. Answer accuracy has moved around
+- **Quality held: every request that got an answer was right.** 10/10
+  answered in-corpus questions correct, 3/3 answered out-of-scope questions
+  declined, no made-up answers.
+- **Capacity didn't.** All 6 failures were Groq's free-tier limit (8,000
+  tokens/minute). Gemini's daily quota (20 answers) was already used, so every
+  question went to the Groq fallback, back to back. The API fails fast rather
+  than waiting out a rate limit inside a 30-second request, so those became
+  errors. That's the real ceiling of a free-tier stack under a burst.
+- **Caveat on the grading:** the judge also ran on Groq, so it graded Groq's
+  own answers, and its calls used the same tokens-per-minute budget as the
+  API, which contributed to the failures.
+- **The first attempt crashed instead of recording.** The API returned 503s
+  because a retry change I'd just shipped waited out Gemini's "try again in N
+  seconds" hint and ran the query Lambda into its 30-second timeout before it
+  could fall back to Groq. The eval found it, I fixed it, and the run above is
+  the first one after the fix.
+
+**Previous run** (11 questions, keyword-graded, mostly answered by Gemini, on
+the same 118-chunk corpus): retrieval 8/8, answers 7/8, out-of-scope 3/3
+declined.
+
+Retrieval was 100% in every run where the API answered. Answer accuracy has moved around
 run to run (as low as 62%) - not from wrong retrieval, but from two separate
 harness issues, both fixed rather than papered over by re-running until the
 score looked good:
@@ -262,22 +288,17 @@ score looked good:
    "on-demand" - which an exact-string match was wrongly failing. The eval
    script now normalizes both before comparing.
 
-The one remaining miss is a genuine limitation of keyword matching, not a
-bug: a correct answer paraphrased using different words than my expected
-keyword. Full history in `INTERVIEW_NOTES.md`.
+In the 11-question run, the one remaining miss was a limitation of keyword
+matching, not a bug: a correct answer paraphrased with different words than
+the expected keyword. That's why the 19-question eval adds an LLM judge.
 
-**Bigger eval, not yet recorded.** The question set is now 19 (14 in-corpus,
-5 out-of-scope), and the script can grade each answer with an LLM judge
-(`--judge`) against a reference answer, alongside the keyword check, and
-repeat the whole set (`--runs N`) to report a range instead of one sample.
-The numbers above are still from the earlier 11-question run - the new set
-hasn't produced a valid run yet, and I'd rather leave the old numbers up than
-post unreliable ones. The first attempt used Gemini as the judge, which
-burned the free tier's 20 generate requests per day - the same quota the
-live API answers from - so only 2 of 14 answers in the second run got
-graded. That result was discarded, and the judge now runs on Groq. It also
-surfaced a real limit: the live demo answers from Gemini for about 20
-questions a day, then everything comes from the Groq fallback.
+Before the recorded 19-question run, one attempt was discarded: it used
+Gemini as the judge, which burned the free tier's 20 generate requests per
+day (the same quota the live API answers from), so most answers never got
+graded. The judge moved to Groq. `--runs N` can repeat the set to report a
+range instead of one sample, but each run spends most of a day's Gemini
+quota, so the recorded result is a single run. Full history in
+`INTERVIEW_NOTES.md`.
 
 ## IAM
 
@@ -310,7 +331,7 @@ working exactly as intended, if inconvenient mid-incident.
 ```mermaid
 flowchart TD
     DEV[Feature branch] -->|open PR| PR[Pull request]
-    PR --> T1[pytest: 45 offline tests]
+    PR --> T1[pytest: 46 offline tests]
     T1 -->|fail| BLOCK[Merge blocked:<br/>fix and push again]
     BLOCK --> PR
     T1 -->|pass| MERGE[Merge to main]
@@ -327,7 +348,7 @@ branch, and the rule applies to admins too. No approvals are required - it's
 a one-person repo and GitHub doesn't let you approve your own PR - so the
 test check is the gate.
 
-GitHub Actions (`.github/workflows/tests.yml`) runs the 45 unit tests on every
+GitHub Actions (`.github/workflows/tests.yml`) runs the 46 unit tests on every
 push and pull request - no AWS credentials involved, since nothing in them
 makes a real call. On a push to `main`, after the tests pass, a second job
 runs `cdk deploy` using **GitHub OIDC**: GitHub hands the job a short-lived
@@ -394,4 +415,6 @@ curl -X POST "$(aws cloudformation describe-stacks --stack-name InfrastructureSt
 - [x] Hardening - S3-delete cleanup + daily reconcile job, SNS alarm emails,
       branch protection on `main`, deploy-time API URL for the demo, batched
       embeddings + server retry hints, 19-question LLM-judged eval
-- [ ] Record a valid run of the 19-question eval
+- [x] Record a run of the 19-question eval (2026-11-02, single run, as-is)
+- [ ] Keep the eval from competing with the API for the same rate limits
+      (judge on a separate quota, or pace the questions)
