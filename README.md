@@ -18,6 +18,14 @@ I wanted one place that answers from the official AWS documentation and
 shows me the exact passage it came from, so I can trust the answer without
 checking five other tabs.
 
+Just as important: **if the documents don't contain the answer, it doesn't
+make one up.** Ask it "What is the capital of France?" and the live API
+replies, word for word, `I don't know.` A confident wrong answer is worse
+than no answer when you're looking up a limit you're about to design around.
+The model is instructed to answer only from the retrieved passages, and the
+eval checks that it holds: all 3 out-of-scope questions were declined in the
+recorded run.
+
 So I built it, deployed it, and kept running it. It has been live since
 September 2026. The people using it are me and a handful of people I shared
 the link with.
