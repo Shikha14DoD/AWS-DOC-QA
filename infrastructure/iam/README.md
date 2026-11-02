@@ -129,3 +129,16 @@ doesn't have, so do it once from the console as the root user:
 The next push to `main` will then deploy. This path has been exercised for
 real (first successful OIDC deploy: 2026-09-23), after fixing the trust policy's
 subject as described in step 3.
+
+### Optional: alarm emails
+
+The three CloudWatch alarms (ingest errors, query errors, DLQ depth) have no
+action attached by default - visible in the console, nothing more. To get an
+email when one fires, add one more repo variable the same way:
+**Variables -> New repository variable**, name `ALARM_EMAIL`, value the
+address to notify. The next deploy creates an SNS topic, subscribes that
+address, and attaches it to all three alarms (see `alarm_email` in
+`infrastructure_stack.py`). AWS sends a confirmation email to that address
+the first time - the subscription (and the actual alarm emails) won't start
+until it's clicked. Leaving the variable unset keeps the current
+no-action behavior.

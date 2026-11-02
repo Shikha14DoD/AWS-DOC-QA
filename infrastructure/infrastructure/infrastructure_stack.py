@@ -19,6 +19,9 @@ from aws_cdk import (
     aws_cloudfront_origins as origins,
     aws_events as events,
     aws_events_targets as targets,
+    aws_sns as sns,
+    aws_sns_subscriptions as subscriptions,
+    aws_cloudwatch_actions as cw_actions,
 )
 from constructs import Construct
 
@@ -318,11 +321,20 @@ class InfrastructureStack(Stack):
 
         # --- Alarms ----------------------------------------------------
 
-        # No SNS action wired up (that means picking an email/subscriber,
-        # which is a call for whoever runs this, not something to bake into
-        # the stack) - these alarms are visible in the CloudWatch console and
-        # ready for an action to be attached later.
-        cloudwatch.Alarm(
+        # Email subscriber is deploy-time config, not something to hardcode
+        # in source (this repo is public) - passed as CDK context. Locally:
+        # `cdk deploy -c alarmEmail=you@example.com`. In CI: the ALARM_EMAIL
+        # repo variable, same pattern as AWS_DEPLOY_ROLE_ARN (see the
+        # workflow and infrastructure/iam/README.md). Omit it and the alarms
+        # still exist, just with no action attached - same as before.
+        alarm_email = self.node.try_get_context("alarmEmail")
+        alarm_actions = []
+        if alarm_email:
+            alarm_topic = sns.Topic(self, "AlarmTopic", display_name="aws-doc-qa alarms")
+            alarm_topic.add_subscription(subscriptions.EmailSubscription(alarm_email))
+            alarm_actions = [cw_actions.SnsAction(alarm_topic)]
+
+        ingest_errors_alarm = cloudwatch.Alarm(
             self, "IngestErrorsAlarm",
             metric=self.ingest_fn.metric_errors(period=Duration.minutes(5)),
             threshold=1,
@@ -330,7 +342,7 @@ class InfrastructureStack(Stack):
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             alarm_description="Ingest Lambda raised an error",
         )
-        cloudwatch.Alarm(
+        query_errors_alarm = cloudwatch.Alarm(
             self, "QueryErrorsAlarm",
             metric=self.query_fn.metric_errors(period=Duration.minutes(5)),
             threshold=1,
@@ -338,7 +350,7 @@ class InfrastructureStack(Stack):
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             alarm_description="Query Lambda raised an error",
         )
-        cloudwatch.Alarm(
+        dlq_alarm = cloudwatch.Alarm(
             self, "IngestDLQAlarm",
             metric=ingest_dlq.metric_approximate_number_of_messages_visible(
                 period=Duration.minutes(5),
@@ -348,6 +360,9 @@ class InfrastructureStack(Stack):
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             alarm_description="A document failed ingestion and landed in the DLQ",
         )
+        for alarm in (ingest_errors_alarm, query_errors_alarm, dlq_alarm):
+            for action in alarm_actions:
+                alarm.add_alarm_action(action)
 
         # --- Demo site -----------------------------------------------------
 

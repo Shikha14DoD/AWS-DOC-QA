@@ -70,5 +70,8 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-2
 
-      - run: cdk deploy InfrastructureStack --require-approval never
+      # ALARM_EMAIL is optional - if the repo variable isn't set, the alarms
+      # still get created, just with no SNS action attached (same as before
+      # this existed). Set it to subscribe an email to alarm notifications.
+      - run: cdk deploy InfrastructureStack --require-approval never -c alarmEmail="${{ vars.ALARM_EMAIL }}"
         working-directory: infrastructure
