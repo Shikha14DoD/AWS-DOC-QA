@@ -394,12 +394,23 @@ class InfrastructureStack(Stack):
             ),
         )
 
+        # config.js carries the live API URL into the demo page - generated
+        # here instead of hardcoded in demo/index.html, so a URL change
+        # (a stack replacement, a new region) doesn't need a manual edit to
+        # the page that could drift from what's actually deployed.
+        # http_api.api_endpoint is a deploy-time token (Fn::GetAtt); embedding
+        # it in Source.data works because BucketDeployment's custom resource
+        # resolves tokens before writing the file, same as any other CDK prop.
+        demo_config = s3deploy.Source.data(
+            "config.js", f'window.API_BASE = "{http_api.api_endpoint}";'
+        )
+
         # Deploys demo/index.html on every `cdk deploy`, and invalidates the
         # CloudFront cache so the live site never serves a stale version of
         # what's committed.
         s3deploy.BucketDeployment(
             self, "DemoSiteDeployment",
-            sources=[s3deploy.Source.asset(str(REPO_ROOT / "demo"))],
+            sources=[s3deploy.Source.asset(str(REPO_ROOT / "demo")), demo_config],
             destination_bucket=self.demo_site_bucket,
             distribution=self.demo_distribution,
             distribution_paths=["/*"],

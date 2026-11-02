@@ -431,8 +431,15 @@
   </div>
 </div>
 
+<!-- config.js is written by the CDK deploy (BucketDeployment, see
+     infrastructure_stack.py) with the live API's actual URL, so it's never
+     hardcoded here. Opening this file straight from disk (no config.js
+     present) falls back to the last-deployed URL below, which is fine for
+     local layout/style tweaks but won't actually hit a live API unless
+     that URL still resolves. -->
+<script src="config.js"></script>
 <script>
-  const API_BASE = "https://y1ivyu5swg.execute-api.us-east-2.amazonaws.com";
+  const API_BASE = window.API_BASE || "https://y1ivyu5swg.execute-api.us-east-2.amazonaws.com";
   const API_URL = API_BASE + "/query";
   const UPLOAD_URL = API_BASE + "/upload";
   const DOCUMENTS_URL = API_BASE + "/documents";
