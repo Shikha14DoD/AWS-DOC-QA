@@ -1,14 +1,66 @@
 # AWS Document Q&A
 
+### ▶ [Try the live demo](https://dsocz579or6gq.cloudfront.net)
+
+Ask it a question about AWS and get an answer with citations to the exact
+passages it used. You can upload your own document too (AWS-related only, and
+it checks).
+
 [![tests](https://github.com/Shikha14DoD/AWS-DOC-QA/actions/workflows/tests.yml/badge.svg)](https://github.com/Shikha14DoD/AWS-DOC-QA/actions/workflows/tests.yml)
 
-**[Live demo](https://dsocz579or6gq.cloudfront.net)**
-\- ask it a question, get a real answer from the deployed API with citations.
-Shows a live "knowledge base" panel of exactly which documents are
-answerable, and you can upload your own (AWS-related content only - it's
-checked). S3 + CloudFront (no third-party host, no backend of its own beyond
-the API below) - the bucket is private, CloudFront reads it via Origin Access
-Control, and CloudFront's own domain serves HTTPS at no extra cost.
+## Why this exists
+
+Nobody assigned this. I built it because I kept wasting time on simple AWS
+questions like "what's the max Lambda timeout?" or "how big can a DynamoDB
+item be?" Searching online meant opening several blogs, forum answers and
+old docs, and still having to work out which one was current and correct.
+I wanted one place that answers from the official AWS documentation and
+shows me the exact passage it came from, so I can trust the answer without
+checking five other tabs.
+
+Just as important: **if the documents don't contain the answer, it doesn't
+make one up.** Ask it "What is the capital of France?" and the live API
+replies, word for word, `I don't know.` A confident wrong answer is worse
+than no answer when you're looking up a limit you're about to design around.
+The model is instructed to answer only from the retrieved passages, and the
+eval checks that it holds: all 3 out-of-scope questions were declined in the
+recorded run.
+
+So I built it, deployed it, and kept running it. It has been live since
+September 2026. The people using it are me and a handful of people I shared
+the link with.
+
+The fun part has been that it keeps breaking in ways no tutorial warned me
+about:
+
+- **My own 62-page VPC training PDF silently lost its last 12 pages.**
+  Ingest caps PDFs at 50 pages and said nothing about it. Now the upload
+  response tells you exactly how many pages got indexed.
+- **That same PDF tripped Gemini's rate limit.** I first misread it as a
+  daily quota. It was per-minute, and the error message was telling me how
+  long to wait the whole time. Now the retry reads that hint, and chunks are
+  embedded in batches instead of 106 separate calls.
+- **The demo link said "Not secure".** It was plain HTTP from S3, so I moved
+  it behind CloudFront with HTTPS. Then someone I'd shared it with *still* got
+  a browser warning. The certificate was fine (I checked it); random
+  `*.cloudfront.net` addresses just look suspicious to security filters.
+- **Deleting a document didn't delete it.** Its chunks stayed searchable, so
+  the API could cite a file that no longer existed. Now a delete event cleans
+  them up, and a daily job catches anything the event missed.
+- **My own eval starved the demo.** The LLM judge I added used the same
+  20-requests-a-day Gemini quota that answers real questions, and burned it
+  in one run. I threw the results away and moved the judge to a different
+  provider.
+- **Things outside my code broke it too.** Google retired two models I was
+  calling, Groq's Cloudflare blocked Python's default user-agent, and the
+  first automated deploy failed with "not authorized" until I printed the
+  login token's claims and found GitHub had changed its format.
+
+Each one is fixed (or, for the browser warning, understood), covered by the
+45 offline tests that run on every pull request where code was involved, and
+written up below.
+
+## What it is
 
 A small serverless RAG API on AWS. You upload documents, then ask questions about
 them and get back an answer with citations to the chunks it used. The corpus
@@ -16,42 +68,57 @@ them and get back an answer with citations to the chunks it used. The corpus
 quotas, DynamoDB basics, S3 storage classes - paraphrased from AWS's own docs
 with the source URL on each file, not invented facts.
 
-I built this mostly to have a real AWS project to point at - Lambda, DynamoDB,
-S3, API Gateway, all defined with CDK. The part I care about is the reliability
-stuff (retries, LLM fallback, a dead-letter queue for failed ingests), not the
-RAG pattern itself.
+Lambda, DynamoDB, S3, API Gateway, SQS, CloudWatch, EventBridge, all defined
+with CDK. The demo page is hosted on AWS too (private S3 bucket behind
+CloudFront, via Origin Access Control). The part I care about is the
+reliability stuff (retries, LLM fallback, a dead-letter queue, cleanup jobs,
+alerts), not the RAG pattern itself.
 
 **Status:** deployed and working. Live API, real ingestion, real answers with
 citations, and a small eval harness run against it (see below).
 
 ## Architecture
 
+Three small diagrams, one per path through the system.
+
+**1. Adding and removing documents**
+
 ```mermaid
-flowchart LR
-    DEMO[Demo page\nS3 + CloudFront] -->|POST /upload| APIGW[API Gateway]
-    DEMO -->|POST /query| APIGW
-    DEMO -->|GET /documents| APIGW
-
-    APIGW --> UPL[Lambda: upload]
+flowchart TD
+    DEMO[Demo page] -->|POST /upload| UPL[Lambda: upload]
     UPL -->|is this about AWS?| GEM0[Gemini]
-    UPL -->|accepted| S3[(S3 bucket)]
+    UPL -->|accepted| S3[(S3 documents bucket)]
+    CLI[CLI script] -->|upload| S3
+    S3 -->|file added| ING[Lambda: ingest]
+    S3 -->|file deleted| ING
+    ING -->|embed chunks in batches| GEM1[Gemini embeddings]
+    ING -->|write or delete chunks| DDB[(DynamoDB chunks table)]
+    SCHED[EventBridge, once a day] --> REC[Lambda: reconcile]
+    REC -->|compare keys vs chunks,<br/>delete orphans| DDB
+```
 
-    CLI[CLI: upload_document.py] -->|upload doc| S3
-    S3 -->|ObjectCreated| ING[Lambda: ingest]
-    ING -->|embed chunks| GEM1[Gemini embeddings]
-    ING -->|write chunks| DDB[(DynamoDB ChunksTable)]
+**2. Asking a question**
 
-    APIGW --> QRY[Lambda: query]
-    QRY -->|embed question| GEM2[Gemini embeddings]
-    QRY -->|scan + cosine rank| DDB
-    QRY -->|answer with context| LLM[Gemini, falls back to Groq]
-    QRY -->|answer + citations| DEMO
+```mermaid
+flowchart TD
+    DEMO[Demo page] -->|POST /query| QRY[Lambda: query]
+    QRY -->|1. embed the question| GEM[Gemini embeddings]
+    QRY -->|2. scan + cosine rank| DDB[(DynamoDB chunks table)]
+    QRY -->|3. answer from top chunks| LLM[Gemini<br/>falls back to Groq]
+    QRY -->|4. answer + citations| DEMO
+    DEMO -->|GET /documents| DOCS[Lambda: documents]
+    DOCS -->|list what's indexed| DDB
+```
 
-    APIGW --> DOCS[Lambda: documents]
-    DOCS -->|list corpus| DDB
+**3. When something fails**
 
-    ING -.failed events.-> DLQ[(SQS dead-letter queue)]
-    ING & QRY & UPL & DOCS -.logs / metrics.-> CW[CloudWatch]
+```mermaid
+flowchart TD
+    ING[Lambda: ingest] -->|fails after retries| DLQ[(SQS dead-letter queue)]
+    LAMBDAS[All Lambdas] -->|JSON logs + error metrics| CW[CloudWatch alarms]
+    DLQ -->|message count| CW
+    CW -->|alarm fires| SNS[SNS topic]
+    SNS --> EMAIL[Email]
 ```
 
 There's no vector database. The table stores the vectors as JSON and the Lambda
@@ -125,16 +192,32 @@ count, no LLM call) - the demo page's "Knowledge base" panel is just that
 endpoint rendered, so visitors see what's actually answerable before they ask
 anything, and it refreshes itself after an upload is accepted.
 
+The demo page doesn't hardcode the API URL. The CDK deploy writes a
+`config.js` next to it with the API's real endpoint (`s3deploy.Source.data`
+with the endpoint as a deploy-time token), so the deploy that creates the API
+is also the thing that tells the page where it is.
+
 ## Reliability
 
 - Retry with backoff on every Gemini call, but only for transient failures
-  (429/5xx/timeout) - a bad request fails fast instead of retrying a bug 3 times
+  (429/5xx/timeout) - a bad request fails fast instead of retrying a bug 3 times.
+  When a 429 says how long to wait (`Retry-After`, or the `retryDelay` in
+  Gemini's error body), the retry waits that long instead of guessing, capped
+  at 20 s so it can't sleep past the Lambda timeout
+- Ingest embeds a document's chunks in batches (`batchEmbedContents`, up to
+  100 per call) instead of one HTTP call per chunk
 - If Gemini's answer call keeps failing, the query Lambda falls back to Groq;
   the response says which provider actually answered
 - SQS dead-letter queue on the ingest Lambda, so a document that fails to
   ingest is visible and replayable instead of silently vanishing
+- Deleting a file from S3 deletes its chunks (`ObjectRemoved` event), so the
+  API can't keep citing a document that's gone. A daily reconcile job compares
+  bucket keys against the table and removes anything orphaned, for deletes
+  that never produced an event (e.g. S3 Lifecycle expiry)
 - Every request logs one JSON line (latency, success, provider) to CloudWatch;
-  three alarms watch ingest errors, query errors, and DLQ depth
+  three alarms watch ingest errors, query errors, and DLQ depth, and email
+  through SNS when they fire (the address is deploy-time config, not in the
+  repo)
 
 Deploying this for real (rather than just `cdk synth` passing) surfaced a
 string of real bugs none of which show up in a mocked unit test: a reserved
@@ -183,6 +266,19 @@ The one remaining miss is a genuine limitation of keyword matching, not a
 bug: a correct answer paraphrased using different words than my expected
 keyword. Full history in `INTERVIEW_NOTES.md`.
 
+**Bigger eval, not yet recorded.** The question set is now 19 (14 in-corpus,
+5 out-of-scope), and the script can grade each answer with an LLM judge
+(`--judge`) against a reference answer, alongside the keyword check, and
+repeat the whole set (`--runs N`) to report a range instead of one sample.
+The numbers above are still from the earlier 11-question run - the new set
+hasn't produced a valid run yet, and I'd rather leave the old numbers up than
+post unreliable ones. The first attempt used Gemini as the judge, which
+burned the free tier's 20 generate requests per day - the same quota the
+live API answers from - so only 2 of 14 answers in the second run got
+graded. That result was discarded, and the judge now runs on Groq. It also
+surfaced a real limit: the live demo answers from Gemini for about 20
+questions a day, then everything comes from the Groq fallback.
+
 ## IAM
 
 The deploying IAM user (`shikha-dev`) had `AdministratorAccess` while the
@@ -211,7 +307,27 @@ working exactly as intended, if inconvenient mid-incident.
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/tests.yml`) runs the 24 unit tests on every
+```mermaid
+flowchart TD
+    DEV[Feature branch] -->|open PR| PR[Pull request]
+    PR --> T1[pytest: 45 offline tests]
+    T1 -->|fail| BLOCK[Merge blocked:<br/>fix and push again]
+    BLOCK --> PR
+    T1 -->|pass| MERGE[Merge to main]
+    MERGE --> T2[pytest again on main]
+    T2 -->|pass| OIDC[GitHub OIDC token,<br/>no stored AWS keys]
+    OIDC --> ROLE[Assume deploy role in AWS]
+    ROLE --> CDK[cdk deploy]
+    CDK --> AWS[(Live AWS stack)]
+```
+
+`main` is branch-protected: no direct pushes, every change comes through a
+pull request that has to pass the `pytest` check against an up-to-date
+branch, and the rule applies to admins too. No approvals are required - it's
+a one-person repo and GitHub doesn't let you approve your own PR - so the
+test check is the gate.
+
+GitHub Actions (`.github/workflows/tests.yml`) runs the 45 unit tests on every
 push and pull request - no AWS credentials involved, since nothing in them
 makes a real call. On a push to `main`, after the tests pass, a second job
 runs `cdk deploy` using **GitHub OIDC**: GitHub hands the job a short-lived
@@ -248,12 +364,14 @@ aws ssm put-parameter --name /docqa/gemini-api-key --type SecureString \
 aws ssm put-parameter --name /docqa/groq-api-key --type SecureString \
   --value "YOUR_GROQ_KEY" --region us-east-2
 
-cdk deploy InfrastructureStack --require-approval never
+# alarmEmail is optional - leave it off and the alarms exist with no email
+cdk deploy InfrastructureStack --require-approval never -c alarmEmail=you@example.com
 
 cd ..
 python scripts/upload_document.py corpus/lambda-limits.md
 python scripts/ask.py "What is the maximum Lambda timeout?"
-python scripts/eval.py
+python scripts/eval.py                     # keyword-graded, one run
+python scripts/eval.py --judge --runs 2    # LLM-judged, repeated
 
 # or hit the upload API directly, like the demo page does
 curl -X POST "$(aws cloudformation describe-stacks --stack-name InfrastructureStack \
@@ -273,3 +391,7 @@ curl -X POST "$(aws cloudformation describe-stacks --stack-name InfrastructureSt
       live knowledge-base panel, per-route throttling
 - [x] CI - unit tests on every push and PR (GitHub Actions)
 - [x] CD - deploy on merge via GitHub OIDC (first successful run 2026-09-23)
+- [x] Hardening - S3-delete cleanup + daily reconcile job, SNS alarm emails,
+      branch protection on `main`, deploy-time API URL for the demo, batched
+      embeddings + server retry hints, 19-question LLM-judged eval
+- [ ] Record a valid run of the 19-question eval
