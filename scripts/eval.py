@@ -39,7 +39,7 @@ import boto3
 sys.path.insert(
     0, str(Path(__file__).resolve().parents[1] / "lambdas" / "layers" / "common" / "python")
 )
-from doc_qa_common import gemini  # noqa: E402
+from doc_qa_common import groq  # noqa: E402
 
 # LLMs favor typographically "correct" Unicode punctuation over plain ASCII -
 # a narrow no-break space (U+202F) between a number and its unit ("400 KB"),
@@ -59,11 +59,16 @@ REGION = "us-east-2"
 QUESTIONS_PATH = Path(__file__).resolve().parents[1] / "eval" / "questions.json"
 RESULTS_PATH = Path(__file__).resolve().parents[1] / "eval" / "results.md"
 
-# Same SSM path the deployed stack itself reads from (infrastructure_stack.py's
-# GEMINI_API_KEY_PARAM) - the judge calls Gemini directly, not through the API.
-os.environ.setdefault("GEMINI_API_KEY_PARAM", "/docqa/gemini-api-key")
+# The judge runs on Groq, not Gemini. First version used Gemini and burned the
+# free tier's 20 generate requests/day in under one run - the same daily quota
+# the live query API answers from, so judging starved the thing being judged.
+# Groq has its own quota, and a different model grading Gemini's answers is
+# less self-serving than Gemini grading itself. Caveat: when the API has
+# already fallen back to Groq (provider column = groq), Groq is grading its
+# own output for that row.
+os.environ.setdefault("GROQ_API_KEY_PARAM", "/docqa/groq-api-key")
 
-JUDGE_MODEL = "gemini-3.6-flash"
+JUDGE_MODEL = "openai/gpt-oss-20b"
 
 DECLINE_PATTERNS = [
     r"\bi don'?t know\b",
@@ -125,7 +130,7 @@ def judge_answer(question: str, expected_answer: str, answer: str) -> bool | Non
     silently counted as wrong.
     """
     try:
-        verdict = gemini.generate(
+        verdict = groq.generate(
             JUDGE_PROMPT.format(question=question, expected_answer=expected_answer, answer=answer),
             model=JUDGE_MODEL,
             temperature=0,
