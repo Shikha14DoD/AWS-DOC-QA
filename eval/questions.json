@@ -3,49 +3,99 @@
     "question": "What is the maximum execution timeout for a Lambda function?",
     "type": "in_corpus",
     "expected_source": "lambda-limits",
-    "expected_keywords": ["900", "15 minutes"]
+    "expected_keywords": ["900", "15 minutes"],
+    "expected_answer": "900 seconds (15 minutes)."
   },
   {
     "question": "How much memory can a single Lambda function be configured with?",
     "type": "in_corpus",
     "expected_source": "lambda-limits",
-    "expected_keywords": ["10,240", "10240", "10 GB"]
+    "expected_keywords": ["10,240", "10240", "10 GB"],
+    "expected_answer": "Up to 10,240 MB."
   },
   {
     "question": "What is the default concurrent execution limit per AWS account for Lambda?",
     "type": "in_corpus",
     "expected_source": "lambda-limits",
-    "expected_keywords": ["1,000", "1000"]
+    "expected_keywords": ["1,000", "1000"],
+    "expected_answer": "1,000 concurrent executions per account per Region."
+  },
+  {
+    "question": "What is the default timeout for a newly created Lambda function?",
+    "type": "in_corpus",
+    "expected_source": "lambda-limits",
+    "expected_keywords": ["3 seconds"],
+    "expected_answer": "3 seconds."
+  },
+  {
+    "question": "What happens to a synchronous Lambda invocation when the concurrency limit is exceeded?",
+    "type": "in_corpus",
+    "expected_source": "lambda-limits",
+    "expected_keywords": ["429", "toomanyrequests"],
+    "expected_answer": "The caller gets a 429 TooManyRequestsException."
   },
   {
     "question": "What is the maximum size of a single DynamoDB item?",
     "type": "in_corpus",
     "expected_source": "dynamodb-basics",
-    "expected_keywords": ["400 KB", "400KB"]
+    "expected_keywords": ["400 KB", "400KB"],
+    "expected_answer": "400 KB, including attribute names and values."
   },
   {
     "question": "Which DynamoDB billing mode has no cost when the table sits idle?",
     "type": "in_corpus",
     "expected_source": "dynamodb-basics",
-    "expected_keywords": ["on-demand", "pay-per-request"]
+    "expected_keywords": ["on-demand", "pay-per-request"],
+    "expected_answer": "On-demand (pay-per-request) mode."
   },
   {
     "question": "Can a DynamoDB Local Secondary Index be added to a table after it's created?",
     "type": "in_corpus",
     "expected_source": "dynamodb-basics",
-    "expected_keywords": ["table creation", "creation time"]
+    "expected_keywords": ["table creation", "creation time"],
+    "expected_answer": "No - an LSI can only be created at table creation time."
+  },
+  {
+    "question": "How many Global Secondary Indexes can a DynamoDB table have by default?",
+    "type": "in_corpus",
+    "expected_source": "dynamodb-basics",
+    "expected_keywords": ["20"],
+    "expected_answer": "Up to 20 GSIs by default."
+  },
+  {
+    "question": "Can a Global Secondary Index serve a strongly consistent read?",
+    "type": "in_corpus",
+    "expected_source": "dynamodb-basics",
+    "expected_keywords": ["not supported", "cannot", "no"],
+    "expected_answer": "No - strongly consistent reads are not supported from a GSI."
   },
   {
     "question": "How many nines of durability does S3 Standard offer?",
     "type": "in_corpus",
     "expected_source": "s3-storage-classes",
-    "expected_keywords": ["11 nines", "99.999999999"]
+    "expected_keywords": ["11 nines", "99.999999999"],
+    "expected_answer": "99.999999999% - 11 nines."
   },
   {
     "question": "What happens when you delete an object in a versioning-enabled S3 bucket?",
     "type": "in_corpus",
     "expected_source": "s3-storage-classes",
-    "expected_keywords": ["delete marker"]
+    "expected_keywords": ["delete marker"],
+    "expected_answer": "A delete marker is inserted as the new current version; the object isn't actually removed."
+  },
+  {
+    "question": "How many lifecycle rules can a single S3 bucket have?",
+    "type": "in_corpus",
+    "expected_source": "s3-storage-classes",
+    "expected_keywords": ["1,000", "1000"],
+    "expected_answer": "Up to 1,000 rules per bucket."
+  },
+  {
+    "question": "Which S3 storage class has the slowest object retrieval time?",
+    "type": "in_corpus",
+    "expected_source": "s3-storage-classes",
+    "expected_keywords": ["deep archive"],
+    "expected_answer": "S3 Glacier Deep Archive - retrieval can take hours."
   },
   {
     "question": "What is the current price of a Tesla Model 3?",
@@ -57,6 +107,14 @@
   },
   {
     "question": "What is the weather in Paris right now?",
+    "type": "out_of_scope"
+  },
+  {
+    "question": "What is the capital of France?",
+    "type": "out_of_scope"
+  },
+  {
+    "question": "Translate 'good morning' into Spanish.",
     "type": "out_of_scope"
   }
 ]
