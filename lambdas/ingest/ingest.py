@@ -114,9 +114,13 @@ def _process_object(bucket: str, key: str) -> int:
             text = raw.decode("utf-8", errors="replace")
         chunks = chunk_text(text)
 
+        # One batchEmbedContents call (or a few, past gemini.MAX_BATCH_SIZE)
+        # instead of one embedContents call per chunk - fewer HTTP round
+        # trips, and fewer independent shots at a free-tier rate limit.
+        vectors = gemini.embed_batch([ch["text"] for ch in chunks])
+
         with _table.batch_writer() as batch:
-            for i, ch in enumerate(chunks):
-                vector = gemini.embed(ch["text"])
+            for i, (ch, vector) in enumerate(zip(chunks, vectors)):
                 batch.put_item(
                     Item={
                         "document_id": document_id,

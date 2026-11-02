@@ -10,6 +10,7 @@ and cached for the life of the execution environment.
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 
@@ -47,9 +48,31 @@ def _do_post(model: str, method: str, payload: dict, timeout: int) -> dict:
     except urllib.error.HTTPError as exc:
         # log the body google sent back (no key in it) - "404 Not Found" alone
         # isn't enough to tell a bad model name from a disabled API
-        detail = exc.read().decode("utf-8", errors="replace")[:500]
-        print(f"gemini http error {exc.code} calling {model}:{method}: {detail}")
+        body = exc.read().decode("utf-8", errors="replace")
+        print(f"gemini http error {exc.code} calling {model}:{method}: {body[:500]}")
+        exc.retry_delay = _retry_delay_from_response(exc, body)
         raise
+
+
+def _retry_delay_from_response(exc: urllib.error.HTTPError, body: str) -> float | None:
+    """Pull a server-suggested retry delay off a 429, if it gave one.
+
+    Checked in order: the Retry-After header (seconds), then Gemini's own
+    RetryInfo error detail (a string like "13s" in the JSON body) - whichever
+    is present first. Neither is guaranteed; retry.py falls back to its own
+    backoff when this returns None.
+    """
+    retry_after = exc.headers.get("Retry-After") if exc.headers else None
+    if retry_after:
+        try:
+            return float(retry_after)
+        except ValueError:
+            pass
+
+    match = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', body)
+    if match:
+        return float(match.group(1))
+    return None
 
 
 def _post(model: str, method: str, payload: dict, timeout: int) -> dict:
@@ -67,6 +90,45 @@ def embed(text: str, model: str | None = None, timeout: int = 20) -> list[float]
         timeout,
     )
     return body["embedding"]["values"]
+
+
+# Gemini's own cap on batchEmbedContents - not a tuning knob, it's the most
+# the API accepts in one call.
+MAX_BATCH_SIZE = 100
+
+
+def embed_batch(
+    texts: list[str], model: str | None = None, timeout: int = 60
+) -> list[list[float]]:
+    """Embed many strings in as few HTTP round trips as the API allows.
+
+    One chunk at a time (the original approach) meant one Gemini call - and
+    one shot at hitting the free-tier rate limit - per chunk of a document,
+    even though they're all going to the same model in the same request
+    anyway. batchEmbedContents takes up to MAX_BATCH_SIZE at once; texts
+    beyond that are split into further batches, each still one HTTP call.
+    Order of the returned vectors matches the order of `texts`.
+    """
+    model = model or os.environ.get("EMBED_MODEL", "gemini-embedding-001")
+    vectors: list[list[float]] = []
+    for i in range(0, len(texts), MAX_BATCH_SIZE):
+        group = texts[i : i + MAX_BATCH_SIZE]
+        body = _post(
+            model,
+            "batchEmbedContents",
+            {
+                "requests": [
+                    {
+                        "model": f"models/{model}",
+                        "content": {"parts": [{"text": t}]},
+                    }
+                    for t in group
+                ]
+            },
+            timeout,
+        )
+        vectors.extend(e["values"] for e in body["embeddings"])
+    return vectors
 
 
 def generate(
